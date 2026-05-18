@@ -4,8 +4,8 @@ import { Asset, FamilyMember, MacroSettings, TransferType } from '@/types';
 const GIFT_DEDUCTIONS: Record<string, number> = {
   '배우자': 6.0,
   '자녀': 0.5,
-  '며느리': 0.5,
-  '사위': 0.5,
+  '며느리': 0.1,   // 기타친족 (4촌 이내 인척) — 상증법§53: 1천만원/10년
+  '사위': 0.1,     // 기타친족 (4촌 이내 인척) — 상증법§53: 1천만원/10년
   '손자녀': 0.2,
   '부모': 0.5,
   '조부모': 0.5,
@@ -713,4 +713,457 @@ function buildRationale(
   }
 
   return parts.join(' · ') || '균등 배분 원칙';
+}
+
+// ── 이월과세 계산 (소득세법 §97의2) ─────────────────────────────
+// 배우자/직계존비속으로부터 증여받은 자산을 5년 이내 양도 시 원취득가 적용
+export function calcCarryOverCGT(
+  asset: Asset,
+  giftValue: number,           // 증여받은 시점 시가 (억)
+  saleYearsAfterGift: number,  // 증여 후 매각까지 보유기간 (년)
+  projectedSaleValue: number,  // 예상 매각가 (억)
+): {
+  isCarryOver: boolean;
+  costBasis_carryOver: number;  // 이월과세 적용 시 취득가 (원취득가)
+  costBasis_normal: number;     // 5년+ 보유 시 취득가 (증여시가)
+  cgt_carryOver: number;        // 즉시 매각 시 양도세 (이월과세)
+  cgt_normal: number;           // 5년+ 보유 후 매각 시 양도세
+  extraTaxCarryOver: number;    // 이월과세로 추가 발생하는 세금 (증여효과 감소분)
+} {
+  const isCarryOver = saleYearsAfterGift < 5;
+
+  // 원취득가 (이월과세 적용 시)
+  const costBasis_carryOver = asset.acquisition_cost;
+  // 증여시가 (정상 보유 시)
+  const costBasis_normal = giftValue;
+
+  // 이월과세 시: 원취득일부터 매각일까지의 보유기간
+  const acqYear = asset.acquisition_date
+    ? new Date(asset.acquisition_date).getFullYear()
+    : new Date().getFullYear() - 5;
+  const yearsFromOriginalAcq = (new Date().getFullYear() - acqYear) + saleYearsAfterGift;
+
+  // 장기보유특별공제 — 일반 부동산
+  function lthdForYears(years: number, type: string): number {
+    if (!['상업용부동산', '주거용부동산', '토지'].includes(type)) return 0;
+    if (years >= 15) return 0.30;
+    if (years >= 10) return 0.20;
+    if (years >= 5)  return 0.10;
+    if (years >= 3)  return 0.06;
+    return 0;
+  }
+
+  // 이월과세 적용 CGT: 원취득가 기준
+  const gain_carryOver = Math.max(0, projectedSaleValue - costBasis_carryOver);
+  const lthd_carryOver = lthdForYears(yearsFromOriginalAcq, asset.asset_type);
+  const deductedGain_carryOver = gain_carryOver * (1 - lthd_carryOver);
+  const taxable_carryOver = Math.max(0, deductedGain_carryOver - 0.025);
+  let cgt_carryOver: number;
+  if (yearsFromOriginalAcq < 1) cgt_carryOver = taxable_carryOver * 0.50;
+  else if (yearsFromOriginalAcq < 2) cgt_carryOver = taxable_carryOver * 0.40;
+  else cgt_carryOver = calcIncomeTax(taxable_carryOver);
+
+  // 정상 보유 CGT: 증여시가 기준 (5년 이상 보유 후)
+  const gain_normal = Math.max(0, projectedSaleValue - costBasis_normal);
+  const lthd_normal = lthdForYears(saleYearsAfterGift, asset.asset_type);
+  const deductedGain_normal = gain_normal * (1 - lthd_normal);
+  const taxable_normal = Math.max(0, deductedGain_normal - 0.025);
+  let cgt_normal: number;
+  if (saleYearsAfterGift < 1) cgt_normal = taxable_normal * 0.50;
+  else if (saleYearsAfterGift < 2) cgt_normal = taxable_normal * 0.40;
+  else cgt_normal = calcIncomeTax(taxable_normal);
+
+  const extraTaxCarryOver = Math.max(0, cgt_carryOver - cgt_normal);
+
+  return {
+    isCarryOver,
+    costBasis_carryOver,
+    costBasis_normal,
+    cgt_carryOver,
+    cgt_normal,
+    extraTaxCarryOver,
+  };
+}
+
+// ── 배분 전략 인터페이스 ──────────────────────────────────────
+export interface StrategyAction {
+  recipientId: string;
+  recipientName: string;
+  recipientRelation: string;
+  assetId: string;
+  assetName: string;
+  assetType: string;
+  originalCost: number;         // 원취득가 (억) — for carry-over warning
+  giftValue: number;            // 이전 가치 (억)
+  transferPct: number;          // 이전 비율 (%)
+  yearOffset: number;           // 실행 시점 (몇 년 후)
+  giftTax: number;              // 예상 증여세
+  deductionUsed: number;        // 이번에 사용된 공제액
+  cgtIfImmediateSale: number;   // 증여 후 즉시 매각 시 양도세 (이월과세 적용)
+  cgtIf5yrHoldSale: number;    // 5년 이상 보유 후 매각 시 양도세
+  extraTaxIfImmediate: number;  // 즉시 매각 시 이월과세로 추가 세금
+  carryOverWarning: boolean;    // 이월과세 주의 여부 (추가세금 > 500만원)
+  gainPct: number;              // 시세차익률 (current/acquisition - 1) × 100
+}
+
+export interface FamilyDistributionStrategy {
+  id: string;
+  label: string;
+  tagline: string;
+  actions: StrategyAction[];
+  totalGiftTax: number;
+  cgtSellImmediately: number;   // gift + CGT if all sold right after gift (최악)
+  cgtSellAfter5yr: number;      // gift + CGT if all held 5yr then sold
+  inheritanceAlt: number;       // 증여 안 하고 상속 시 예상 상속세 (10년 후)
+  netToFamilyGiftHold: number;  // 총 자산가치 - giftTax - cgtSellAfter5yr
+  netToFamilyInherit: number;   // 총 자산가치 - inheritanceAlt
+  pros: string[];
+  cons: string[];
+  keyRules: string[];
+  isRecommended: boolean;
+}
+
+// ── 전략 생성 메인 함수 ──────────────────────────────────────
+export function generateDistributionStrategies(
+  selectedAssets: Asset[],
+  recipients: FamilyMember[],
+  macro?: MacroSettings | null,
+  allMembers?: FamilyMember[],
+): FamilyDistributionStrategy[] {
+  if (selectedAssets.length === 0 || recipients.length === 0) return [];
+
+  const totalValue = selectedAssets.reduce((s, a) => s + a.current_value, 0);
+
+  // 수증자를 공제 한도 큰 순으로 정렬
+  const deductionOrder = ['배우자', '자녀', '부모', '조부모', '손자녀', '며느리', '사위', '기타'];
+  const sortedRecipients = [...recipients].sort((a, b) => {
+    const ia = deductionOrder.indexOf(a.relation);
+    const ib = deductionOrder.indexOf(b.relation);
+    const da = (ia === -1 ? 99 : ia);
+    const db = (ib === -1 ? 99 : ib);
+    if (da !== db) return da - db;
+    return (GIFT_DEDUCTIONS[b.relation] ?? 0.1) - (GIFT_DEDUCTIONS[a.relation] ?? 0.1);
+  });
+
+  // 10년 후 자산 가치 추정 (상속 대안 비교용)
+  function getGrowthRate(asset: Asset): number {
+    if (!macro) return 0.03;
+    switch (asset.asset_type) {
+      case '토지': return macro.land_growth_pct / 100;
+      case '주거용부동산': return macro.apt_growth_pct / 100;
+      case '상업용부동산': return macro.commercial_growth_pct / 100;
+      default: return asset.expected_growth_pct / 100;
+    }
+  }
+
+  const projectedValue10yr = selectedAssets.reduce(
+    (s, a) => s + a.current_value * Math.pow(1 + getGrowthRate(a), 10), 0);
+
+  // 상속세 추정 (allMembers 또는 recipients 기반)
+  const membersForInherit = allMembers ?? recipients;
+  const { tax: inheritanceTaxNow } = calcInheritanceTax(totalValue, membersForInherit);
+  const { tax: inheritanceTax10yr } = calcInheritanceTax(projectedValue10yr, membersForInherit);
+
+  // ── 헬퍼: action 생성 ────────────────────────────────────
+  function buildAction(
+    asset: Asset,
+    recipient: FamilyMember,
+    transferPct: number,
+    yearOffset: number,
+    priorGifts: number,
+  ): StrategyAction {
+    const giftValue = asset.current_value * (transferPct / 100);
+    const isSkip = recipient.relation === '손자녀';
+    const giftTax = calcGiftTax(giftValue, recipient.relation, priorGifts, isSkip);
+    const deduction = GIFT_DEDUCTIONS[recipient.relation] ?? 0.1;
+    const deductionUsed = Math.min(giftValue, Math.max(0, deduction - priorGifts));
+
+    // 즉시 매각 시 (이월과세 적용, saleYearsAfterGift=0)
+    const immediate = calcCarryOverCGT(asset, giftValue, 0, giftValue);
+    // 5년 보유 후 매각 — 예상 매각가에 성장률 반영
+    const projectedSale5yr = giftValue * Math.pow(1 + getGrowthRate(asset), 5);
+    const hold5yr = calcCarryOverCGT(asset, giftValue, 5, projectedSale5yr);
+
+    const gainPct = asset.acquisition_cost > 0
+      ? ((asset.current_value - asset.acquisition_cost) / asset.acquisition_cost) * 100
+      : 0;
+
+    return {
+      recipientId: recipient.id,
+      recipientName: recipient.name,
+      recipientRelation: recipient.relation,
+      assetId: asset.id,
+      assetName: asset.name,
+      assetType: asset.asset_type,
+      originalCost: asset.acquisition_cost * (transferPct / 100),
+      giftValue,
+      transferPct,
+      yearOffset,
+      giftTax,
+      deductionUsed,
+      cgtIfImmediateSale: immediate.cgt_carryOver,
+      cgtIf5yrHoldSale: hold5yr.cgt_normal,
+      extraTaxIfImmediate: immediate.extraTaxCarryOver,
+      carryOverWarning: immediate.extraTaxCarryOver > 0.05, // > 500만원
+      gainPct,
+    };
+  }
+
+  // ── 전략 1: 즉시 분산 증여 (공제 최대화) ──────────────────
+  function buildStrategy1(): FamilyDistributionStrategy {
+    const actions: StrategyAction[] = [];
+    // 수증자별 잔여 공제 추적
+    const remainingDeduction: Record<string, number> = {};
+    for (const r of sortedRecipients) {
+      remainingDeduction[r.id] = GIFT_DEDUCTIONS[r.relation] ?? 0.1;
+    }
+    const priorGiftsMap: Record<string, number> = {};
+    for (const r of sortedRecipients) priorGiftsMap[r.id] = 0;
+
+    for (const asset of selectedAssets) {
+      let remainingValue = asset.current_value;
+
+      // 잔여 공제 많은 수증자 우선
+      const recipBySurplus = [...sortedRecipients].sort(
+        (a, b) => (remainingDeduction[b.id] ?? 0) - (remainingDeduction[a.id] ?? 0));
+
+      for (const recip of recipBySurplus) {
+        if (remainingValue <= 0) break;
+        const surplus = remainingDeduction[recip.id] ?? 0;
+        if (surplus <= 0) continue;
+
+        const giftAmt = Math.min(remainingValue, surplus);
+        const pct = (giftAmt / asset.current_value) * 100;
+        actions.push(buildAction(asset, recip, pct, 0, priorGiftsMap[recip.id]));
+        priorGiftsMap[recip.id] += giftAmt;
+        remainingDeduction[recip.id] = Math.max(0, (remainingDeduction[recip.id] ?? 0) - giftAmt);
+        remainingValue -= giftAmt;
+      }
+
+      // 남은 가치가 있으면 공제 초과분 첫 번째 수증자에게
+      if (remainingValue > 0.001) {
+        const recip = sortedRecipients[0];
+        const pct = (remainingValue / asset.current_value) * 100;
+        actions.push(buildAction(asset, recip, pct, 0, priorGiftsMap[recip.id]));
+        priorGiftsMap[recip.id] += remainingValue;
+      }
+    }
+
+    const totalGiftTax = actions.reduce((s, a) => s + a.giftTax, 0);
+    const cgtImmediate = actions.reduce((s, a) => s + a.cgtIfImmediateSale, 0);
+    const cgt5yr = actions.reduce((s, a) => s + a.cgtIf5yrHoldSale, 0);
+
+    return {
+      id: 'strategy1',
+      label: '즉시 분산 증여',
+      tagline: '공제 한도 최대 활용 — 지금 당장 세부담 최소화',
+      actions,
+      totalGiftTax,
+      cgtSellImmediately: totalGiftTax + cgtImmediate,
+      cgtSellAfter5yr: totalGiftTax + cgt5yr,
+      inheritanceAlt: inheritanceTax10yr,
+      netToFamilyGiftHold: totalValue - totalGiftTax - cgt5yr,
+      netToFamilyInherit: totalValue - inheritanceTaxNow,
+      pros: [
+        '공제 한도 내 증여분은 즉시 비과세 이전 가능',
+        '증여 시점에 취득가 확정 → 5년 보유 후 양도세 절감',
+        '자산을 빠르게 가족에게 이전하여 향후 상속세 기반 축소',
+      ],
+      cons: [
+        '공제 초과분은 즉시 증여세 납부 부담',
+        '5년 내 매각 시 이월과세(소득세법§97의2) 적용 — 양도세 폭탄 주의',
+        '일시에 여러 자산 이전 시 유동성 부담 발생 가능',
+      ],
+      keyRules: [
+        '상증법§53: 수증자별 10년 합산 공제 한도 적용',
+        '소득세법§97의2: 5년 이내 매각 시 원취득가 기준 양도세',
+        '상증법§57: 손자녀 세대생략 시 산출세액 30% 할증',
+      ],
+      isRecommended: true,
+    };
+  }
+
+  // ── 전략 2: 10년 분할 (2사이클 공제 활용) ─────────────────
+  function buildStrategy2(): FamilyDistributionStrategy {
+    const actions: StrategyAction[] = [];
+
+    // 사이클 1 (yearOffset=0): 공제 한도까지만 무세 증여
+    for (const asset of selectedAssets) {
+      let remainingValue = asset.current_value;
+      for (const recip of sortedRecipients) {
+        if (remainingValue <= 0) break;
+        const ded = GIFT_DEDUCTIONS[recip.relation] ?? 0.1;
+        const cycle1Amt = Math.min(remainingValue, ded);
+        const pct = (cycle1Amt / asset.current_value) * 100;
+        actions.push(buildAction(asset, recip, pct, 0, 0));
+        remainingValue -= cycle1Amt;
+      }
+
+      // 남은 분 — 사이클 2 (yearOffset=10)
+      if (remainingValue > 0.001) {
+        let rem2 = remainingValue;
+        for (const recip of sortedRecipients) {
+          if (rem2 <= 0) break;
+          const ded = GIFT_DEDUCTIONS[recip.relation] ?? 0.1;
+          const cycle2Amt = Math.min(rem2, ded);
+          const pct = (cycle2Amt / asset.current_value) * 100;
+          // 사이클 2: 공제 리셋 기준이므로 priorGifts=0
+          actions.push(buildAction(asset, recip, pct, 10, 0));
+          rem2 -= cycle2Amt;
+        }
+
+        // 최종 잔여분 (yearOffset=20)
+        if (rem2 > 0.001) {
+          const recip = sortedRecipients[0];
+          const pct = (rem2 / asset.current_value) * 100;
+          actions.push(buildAction(asset, recip, pct, 20, 0));
+        }
+      }
+    }
+
+    const totalGiftTax = actions.reduce((s, a) => s + a.giftTax, 0);
+    const cgtImmediate = actions.reduce((s, a) => s + a.cgtIfImmediateSale, 0);
+    const cgt5yr = actions.reduce((s, a) => s + a.cgtIf5yrHoldSale, 0);
+
+    return {
+      id: 'strategy2',
+      label: '10년 분할 (2사이클 공제)',
+      tagline: '공제를 두 번 써서 세금 없이 이전 — 장기 플랜',
+      actions,
+      totalGiftTax,
+      cgtSellImmediately: totalGiftTax + cgtImmediate,
+      cgtSellAfter5yr: totalGiftTax + cgt5yr,
+      inheritanceAlt: inheritanceTax10yr,
+      netToFamilyGiftHold: totalValue - totalGiftTax - cgt5yr,
+      netToFamilyInherit: totalValue - inheritanceTaxNow,
+      pros: [
+        '사이클 1 공제 한도 내 이전분은 증여세 0원',
+        '10년 후 공제 리셋 → 사이클 2도 무세 구간 활용',
+        '장기간 분산하여 각 시점 증여세 부담 최소화',
+      ],
+      cons: [
+        '20년 이상의 장기 계획 필요 — 계획 변경 위험',
+        '기간 내 자산이 증여자 명의 유지 → 상속세 노출 지속',
+        '자산 가격 상승 시 미래 증여가액 증가 → 절세 효과 감소',
+      ],
+      keyRules: [
+        '상증법§53: 10년 이내 동일인 증여 합산 → 10년 경과 후 공제 리셋',
+        '공제 리셋 시점 이후 새 10년 사이클 공제 재사용 가능',
+        '소득세법§97의2: 각 증여 후 5년 내 매각 시 이월과세 주의',
+      ],
+      isRecommended: false,
+    };
+  }
+
+  // ── 전략 3: 증여 + 5년 보유 매각 전략 ────────────────────
+  function buildStrategy3(): FamilyDistributionStrategy {
+    // 전략 1과 동일한 배분, 핵심 메시지가 5년 보유
+    const actions: StrategyAction[] = [];
+    const remainingDeduction: Record<string, number> = {};
+    for (const r of sortedRecipients) {
+      remainingDeduction[r.id] = GIFT_DEDUCTIONS[r.relation] ?? 0.1;
+    }
+    const priorGiftsMap: Record<string, number> = {};
+    for (const r of sortedRecipients) priorGiftsMap[r.id] = 0;
+
+    for (const asset of selectedAssets) {
+      let remainingValue = asset.current_value;
+      const recipBySurplus = [...sortedRecipients].sort(
+        (a, b) => (remainingDeduction[b.id] ?? 0) - (remainingDeduction[a.id] ?? 0));
+
+      for (const recip of recipBySurplus) {
+        if (remainingValue <= 0) break;
+        const surplus = remainingDeduction[recip.id] ?? 0;
+        if (surplus <= 0) continue;
+        const giftAmt = Math.min(remainingValue, surplus);
+        const pct = (giftAmt / asset.current_value) * 100;
+        actions.push(buildAction(asset, recip, pct, 0, priorGiftsMap[recip.id]));
+        priorGiftsMap[recip.id] += giftAmt;
+        remainingDeduction[recip.id] = Math.max(0, (remainingDeduction[recip.id] ?? 0) - giftAmt);
+        remainingValue -= giftAmt;
+      }
+      if (remainingValue > 0.001) {
+        const recip = sortedRecipients[0];
+        const pct = (remainingValue / asset.current_value) * 100;
+        actions.push(buildAction(asset, recip, pct, 0, priorGiftsMap[recip.id]));
+        priorGiftsMap[recip.id] += remainingValue;
+      }
+    }
+
+    const totalGiftTax = actions.reduce((s, a) => s + a.giftTax, 0);
+    const cgtImmediate = actions.reduce((s, a) => s + a.cgtIfImmediateSale, 0);
+    const cgt5yr = actions.reduce((s, a) => s + a.cgtIf5yrHoldSale, 0);
+
+    // 5년 후 예상 가치
+    const projectedValue5yr = selectedAssets.reduce(
+      (s, a) => s + a.current_value * Math.pow(1 + getGrowthRate(a), 5), 0);
+
+    return {
+      id: 'strategy3',
+      label: '증여 후 5년 보유 매각',
+      tagline: '5년 보유 필수 — 이월과세 회피로 양도세 최소화',
+      actions,
+      totalGiftTax,
+      cgtSellImmediately: totalGiftTax + cgtImmediate,
+      cgtSellAfter5yr: totalGiftTax + cgt5yr,
+      inheritanceAlt: inheritanceTax10yr,
+      netToFamilyGiftHold: projectedValue5yr - totalGiftTax - cgt5yr,
+      netToFamilyInherit: totalValue - inheritanceTaxNow,
+      pros: [
+        '5년 이상 보유 시 증여시가가 취득가로 확정 → 양도세 대폭 절감',
+        `즉시 매각 대비 양도세 절감 예상: ${(cgtImmediate - cgt5yr).toFixed(2)}억원`,
+        `5년 후 예상 자산가치: ${projectedValue5yr.toFixed(1)}억 (성장 반영)`,
+      ],
+      cons: [
+        '5년간 자산 매각 불가 → 유동성 제약',
+        '5년 내 매각 강행 시 이월과세로 원취득가 기준 양도세 부과',
+        '증여세는 즉시 납부 필요 (5년 유예 없음)',
+      ],
+      keyRules: [
+        '소득세법§97의2: 증여 후 5년 이내 양도 시 수증자의 양도차익 = 매각가 - 증여자 원취득가',
+        '5년 경과 후 양도 시 취득가 = 증여받은 시점 시가 (정상 적용)',
+        '보유기간에 따른 장기보유특별공제: 3년+6%, 5년+10%, 10년+20%, 15년+30%',
+      ],
+      isRecommended: false,
+    };
+  }
+
+  // ── 전략 4: 상속 유지 (증여 없음) ────────────────────────
+  function buildStrategy4(): FamilyDistributionStrategy {
+    return {
+      id: 'strategy4',
+      label: '상속 유지',
+      tagline: '지금은 그대로 — 상속으로 이전 (세금 비교용)',
+      actions: [],
+      totalGiftTax: 0,
+      cgtSellImmediately: inheritanceTaxNow,
+      cgtSellAfter5yr: inheritanceTax10yr,
+      inheritanceAlt: inheritanceTax10yr,
+      netToFamilyGiftHold: totalValue - inheritanceTaxNow,
+      netToFamilyInherit: totalValue - inheritanceTax10yr,
+      pros: [
+        '지금 당장 증여세 없음 — 유동성 유지',
+        '자산 운용의 자유 유지 (매각·담보 등)',
+        '복잡한 증여 절차·서류 불필요',
+      ],
+      cons: [
+        `10년 후 자산 가치 ${projectedValue10yr.toFixed(1)}억 기준 상속세 예상: ${inheritanceTax10yr.toFixed(2)}억`,
+        '자산 가치 상승할수록 상속세 부담 증가',
+        '취득가 리셋 기회 없음 → 상속받은 자녀의 추후 양도세 증가 가능',
+      ],
+      keyRules: [
+        '상증법§13: 10년 내 사전증여 합산 — 지금이라도 증여하면 상속세 과표 절감 가능',
+        '상증법§19: 배우자공제 최대 30억',
+        '상증법§22: 금융재산공제 최대 2억',
+      ],
+      isRecommended: false,
+    };
+  }
+
+  return [
+    buildStrategy1(),
+    buildStrategy2(),
+    buildStrategy3(),
+    buildStrategy4(),
+  ];
 }
