@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <defs>
+    <!-- 감청색 배경 그라디언트 -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#162040"/>
+      <stop offset="100%" style="stop-color:#1E2E58"/>
+    </linearGradient>
+    <!-- 금빛 그라디언트 -->
+    <linearGradient id="gold" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#E8C96A"/>
+      <stop offset="50%" style="stop-color:#C9A84C"/>
+      <stop offset="100%" style="stop-color:#A8813A"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 배경 (전통 인장 형태 — 둥근 사각형) -->
+  <rect width="120" height="120" rx="22" fill="url(#bg)"/>
+
+  <!-- 바깥 테두리 (금) -->
+  <rect x="5" y="5" width="110" height="110" rx="18" fill="none" stroke="url(#gold)" stroke-width="2"/>
+  <!-- 안쪽 테두리 (가는 선) -->
+  <rect x="9" y="9" width="102" height="102" rx="15" fill="none" stroke="#C9A84C" stroke-width="0.7" opacity="0.6"/>
+
+  <!-- 네 모서리 전통 문양 (사괘 스타일) -->
+  <!-- 좌상 -->
+  <path d="M9 28 L9 12 Q9 9 12 9 L28 9" fill="none" stroke="url(#gold)" stroke-width="2" stroke-linecap="round"/>
+  <!-- 우상 -->
+  <path d="M92 9 L108 9 Q111 9 111 12 L111 28" fill="none" stroke="url(#gold)" stroke-width="2" stroke-linecap="round"/>
+  <!-- 좌하 -->
+  <path d="M9 92 L9 108 Q9 111 12 111 L28 111" fill="none" stroke="url(#gold)" stroke-width="2" stroke-linecap="round"/>
+  <!-- 우하 -->
+  <path d="M92 111 L108 111 Q111 111 111 108 L111 92" fill="none" stroke="url(#gold)" stroke-width="2" stroke-linecap="round"/>
+
+  <g opacity="0.9">
+    <!-- 중앙 -->
+    <polygon points="60,16 63,24 57,24" fill="url(#gold)"/>
+    <!-- 좌 -->
+    <polygon points="48,19 51,26 45,26" fill="url(#gold)" opacity="0.7"/>
+    <!-- 우 -->
+    <polygon points="72,19 75,26 69,26" fill="url(#gold)" opacity="0.7"/>
+    <!-- 받침 -->
+    <rect x="42" y="25" width="36" height="2" rx="1" fill="url(#gold)" opacity="0.5"/>
+  </g>
+
+  <!-- KYN 메인 텍스트 -->
+  <text
+    x="60" y="75"
+    font-family="Georgia, 'Times New Roman', serif"
+    font-size="36"
+    font-weight="bold"
+    text-anchor="middle"
+    fill="url(#gold)"
+    letter-spacing="3">KYN</text>
+
+  <!-- 삼현(三賢) — 세 개의 점 -->
+  <circle cx="46" cy="90" r="3" fill="url(#gold)" opacity="0.85"/>
+  <circle cx="60" cy="90" r="3" fill="url(#gold)"/>
+  <circle cx="74" cy="90" r="3" fill="url(#gold)" opacity="0.85"/>
+  <!-- 삼현 점 연결선 -->
+  <line x1="46" y1="90" x2="74" y2="90" stroke="#C9A84C" stroke-width="0.5" opacity="0.4"/>
+
+  <text
+    x="60" y="106"
+    font-family="serif"
+    font-size="9"
+    text-anchor="middle"
+    fill="#C9A84C"
+    opacity="0.6"
+    letter-spacing="2">金海金氏</text>
+</svg>

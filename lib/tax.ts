@@ -20,10 +20,17 @@ export function calcGiftTax(
   amount: number,
   relation: string,
   priorGifts = 0,
-  isGenerationSkip = false
+  isGenerationSkip = false,
+  marriageOrBirthBonus = false, // 혼인·출산 증여공제 +1억 (2024년~ 직계존속→자녀)
 ): number {
   const total = amount + priorGifts;
-  const ded = GIFT_DEDUCTIONS[relation] ?? 0.1;
+  let ded = GIFT_DEDUCTIONS[relation] ?? 0.1;
+
+  // 혼인·출산 공제: 직계존속이 자녀에게 증여 시 최대 1억 추가 (상증법 §53의2, 2024~)
+  if (marriageOrBirthBonus && (relation === '자녀' || relation === '손자녀')) {
+    ded += 1.0;
+  }
+
   const base = Math.max(0, total - ded);
   if (base <= 0) return 0;
 
@@ -100,17 +107,21 @@ export function calcCapitalGainsTax(asset: Asset): number {
   const taxableGain = Math.max(0, deductedGain - basicDeduction);
 
   if (asset.asset_type === '금융자산') {
-    return taxableGain > 3 ? taxableGain * 0.25 : taxableGain * 0.20;
+    // 금융투자소득세 2025년 폐지 → 현행 대주주 기준 과세 (일반 소득세율 준용)
+    return calcIncomeTax(taxableGain);
   }
   if (years < 1) return taxableGain * 0.50;
   if (years < 2) return taxableGain * 0.40;
-  return calcProgressiveTax(taxableGain);
+  // 🔧 수정: 양도소득세는 소득세율(6~45%) 적용 — 상속세율(10~50%) 오용 버그 수정
+  return calcIncomeTax(taxableGain);
 }
 
 // ── 종합부동산세 ─────────────────────────────────────────────
+// 🔧 수정: 2023년 이후 완화 세율 + 공정시장가액비율 60% 반영
 export function calcComprehensiveRealEstateTax(
   assets: Asset[],
-  isCorpOwned = false
+  isCorpOwned = false,
+  isMultiHouse = false, // 3주택 이상 중과 여부
 ): number {
   const realEstate = assets.filter(a =>
     ['상업용부동산', '주거용부동산', '토지'].includes(a.asset_type)
@@ -119,22 +130,36 @@ export function calcComprehensiveRealEstateTax(
     s + a.current_value * (a.public_price_ratio / 100), 0
   );
 
+  const FAIR_MARKET_RATE = 0.60; // 공정시장가액비율 60% (2026 기준)
+
   if (isCorpOwned) {
-    // 법인: 단일세율 3%
-    const base = Math.max(0, totalPublicPrice - 0);
-    return base * 0.03;
+    // 법인: 최고세율 단일 적용 (기본공제 없음)
+    return totalPublicPrice * FAIR_MARKET_RATE * 0.027;
   }
 
-  // 개인: 누진세율 (주택 기준)
-  const base = Math.max(0, totalPublicPrice - 9); // 9억 기본공제
-  if (base <= 0) return 0;
-  if (base <= 3)   return base * 0.005;
-  if (base <= 6)   return 0.015 + (base - 3) * 0.007;
-  if (base <= 12)  return 0.036 + (base - 6) * 0.010;
-  if (base <= 25)  return 0.096 + (base - 12) * 0.013;
-  if (base <= 50)  return 0.265 + (base - 25) * 0.018;
-  if (base <= 94)  return 0.715 + (base - 50) * 0.025;
-  return               1.815 + (base - 94) * 0.050;
+  // 과세표준 = (공시가 합계 − 9억 기본공제) × 공정시장가액비율
+  const taxBase = Math.max(0, (totalPublicPrice - 9) * FAIR_MARKET_RATE);
+  if (taxBase <= 0) return 0;
+
+  if (isMultiHouse) {
+    // 3주택 이상 중과세율 (2023년 이후)
+    if (taxBase <= 3)   return taxBase * 0.005;
+    if (taxBase <= 6)   return 0.015 + (taxBase - 3)  * 0.007;
+    if (taxBase <= 12)  return 0.036 + (taxBase - 6)  * 0.010;
+    if (taxBase <= 25)  return 0.096 + (taxBase - 12) * 0.020;
+    if (taxBase <= 50)  return 0.356 + (taxBase - 25) * 0.030;
+    if (taxBase <= 94)  return 1.106 + (taxBase - 50) * 0.040;
+    return               2.866 + (taxBase - 94) * 0.050;
+  }
+
+  // 2주택 이하 일반세율 (2023년 이후 완화)
+  if (taxBase <= 3)   return taxBase * 0.005;
+  if (taxBase <= 6)   return 0.015 + (taxBase - 3)  * 0.007;
+  if (taxBase <= 12)  return 0.036 + (taxBase - 6)  * 0.010;
+  if (taxBase <= 25)  return 0.096 + (taxBase - 12) * 0.013;
+  if (taxBase <= 50)  return 0.265 + (taxBase - 25) * 0.015; // 🔧 1.8%→1.5%
+  if (taxBase <= 94)  return 0.640 + (taxBase - 50) * 0.020; // 🔧 2.5%→2.0%
+  return               1.520 + (taxBase - 94) * 0.027;       // 🔧 5.0%→2.7%
 }
 
 // ── 임대소득세 ───────────────────────────────────────────────
@@ -163,11 +188,13 @@ export function calcIncomeTax(income: number): number {
 }
 
 // ── 법인세 ───────────────────────────────────────────────────
+// 🔧 수정: 2026년 귀속 세율 반영 (전 구간 1%p 인상, 2025.12 국회 통과)
+// 지방소득세(10%) 별도 — 실질 부담률은 각 세율 × 1.1
 export function calcCorporateTax(taxableIncome: number): number {
-  if (taxableIncome <= 2)    return taxableIncome * 0.09;
-  if (taxableIncome <= 200)  return 0.18 + (taxableIncome - 2) * 0.19;
-  if (taxableIncome <= 3000) return 38.20 + (taxableIncome - 200) * 0.21;
-  return                       639.20 + (taxableIncome - 3000) * 0.24;
+  if (taxableIncome <= 2)    return taxableIncome * 0.10;
+  if (taxableIncome <= 200)  return 0.20  + (taxableIncome - 2)   * 0.20;
+  if (taxableIncome <= 3000) return 39.80 + (taxableIncome - 200) * 0.22;
+  return                       655.80 + (taxableIncome - 3000)    * 0.25;
 }
 
 // ── 취득세 ───────────────────────────────────────────────────
@@ -316,4 +343,144 @@ export function calcPCI(
   else if (suspectedAmount < 5) riskLevel = 'caution';
   else riskLevel = 'danger';
   return { suspectedAmount, riskLevel };
+}
+
+// ── 가족간 차용증 (금전소비대차) 분석 ────────────────────────
+// 근거: 상증법 §41의4, 시행령 §31의4, 시행규칙 §10의5
+const FAIR_LOAN_RATE = 0.046;        // 적정이자율 4.6% (당좌대출이자율)
+const LOAN_GIFT_THRESHOLD = 0.1;     // 1천만원 — 이 미만이면 증여세 비과세
+
+export function calcFamilyLoanAnalysis(
+  principal: number,          // 대출 원금 (억)
+  actualRatePct: number,      // 실제 이자율 (%, 예: 2.5)
+  relation: string,
+  priorGifts = 0,
+): {
+  fairInterest: number;           // 적정이자 연간 (억)
+  actualInterest: number;         // 실제 이자 연간 (억)
+  interestGap: number;            // 이자 차액 (억)
+  isGiftTaxable: boolean;         // 연간 증여세 과세 여부
+  annualGiftTax: number;          // 연간 발생 증여세 (억)
+  maxZeroRatePrincipal: number;   // 무이자 가능 최대 원금 (억) ≈ 2.17억
+  riskLevel: 'safe' | 'caution' | 'danger';
+  recommendation: string;
+} {
+  const actualRate = actualRatePct / 100;
+  const fairInterest   = principal * FAIR_LOAN_RATE;
+  const actualInterest = principal * actualRate;
+  const interestGap    = Math.max(0, fairInterest - actualInterest);
+  const isGiftTaxable  = interestGap > LOAN_GIFT_THRESHOLD;
+  const annualGiftTax  = isGiftTaxable
+    ? calcGiftTax(interestGap, relation, priorGifts)
+    : 0;
+
+  // 무이자 한도: 1천만원 ÷ 4.6% ≈ 2.174억
+  const maxZeroRatePrincipal = LOAN_GIFT_THRESHOLD / FAIR_LOAN_RATE;
+
+  let riskLevel: 'safe' | 'caution' | 'danger';
+  if (!isGiftTaxable) riskLevel = 'safe';
+  else if (interestGap < 0.5) riskLevel = 'caution';
+  else riskLevel = 'danger';
+
+  let recommendation: string;
+  if (actualRate === 0 && principal <= maxZeroRatePrincipal) {
+    recommendation = `무이자 가능 — 원금 ${(maxZeroRatePrincipal * 100).toFixed(0)}백만원 이하 시 연 이자상당이익 1천만원 미만으로 비과세`;
+  } else if (actualRate >= FAIR_LOAN_RATE) {
+    recommendation = `적정이자율(4.6%) 이상 지급 — 증여세 없음. 이자는 수령자 이자소득세 과세.`;
+  } else if (!isGiftTaxable) {
+    recommendation = `이자 차액 ${(interestGap * 1000).toFixed(0)}만원 — 1천만원 미만 비과세 유지`;
+  } else {
+    recommendation = `이자 차액 ${(interestGap * 1000).toFixed(0)}만원 초과 → 연 증여세 ${(annualGiftTax * 1000).toFixed(0)}만원 발생. 이자율 ${((LOAN_GIFT_THRESHOLD / principal) * 100).toFixed(2)}% 이상으로 조정 권장`;
+  }
+
+  return {
+    fairInterest, actualInterest, interestGap,
+    isGiftTaxable, annualGiftTax,
+    maxZeroRatePrincipal,
+    riskLevel, recommendation,
+  };
+}
+
+// ── 법인-개인 간 자금 대여 (인정이자) ────────────────────────
+// 법인이 특수관계인(임직원·주주 등)에게 저리 대출 시 인정이자 과세
+// 근거: 법인세법 시행령 §89③, 적정이자율 = 가중평균차입이자율 또는 4.6%
+export function calcCorpLoanImputed(
+  principal: number,      // 대출 원금 (억)
+  actualRatePct: number,  // 실제 이자율 (%)
+): {
+  imputedInterest: number;    // 인정이자 (억)
+  corpTaxImpact: number;      // 법인 손금불산입으로 인한 법인세 증가 (억)
+  recipientIncomeTax: number; // 수령인 근로소득 추가 과세 (억)
+  totalTaxCost: number;       // 합계 세부담 (억)
+} {
+  const imputedRate    = Math.max(0, FAIR_LOAN_RATE - actualRatePct / 100);
+  const imputedInterest = principal * imputedRate;
+  // 법인: 인정이자만큼 익금산입 → 법인세 부담
+  const corpTaxImpact = calcCorporateTax(imputedInterest + 0.0001) - calcCorporateTax(0.0001);
+  // 수령인: 상여·배당으로 소득세 추가
+  const recipientIncomeTax = calcIncomeTax(imputedInterest + 0.0001) - calcIncomeTax(0.0001);
+  return {
+    imputedInterest,
+    corpTaxImpact,
+    recipientIncomeTax,
+    totalTaxCost: corpTaxImpact + recipientIncomeTax,
+  };
+}
+
+// ── 법인전환 절세효과 분석 ────────────────────────────────────
+// 개인 임대·사업소득을 법인으로 전환 시 세부담 비교
+export function calcCorpConversionBenefit(
+  annualRentalIncome: number,   // 연 임대·사업소득 (억)
+  ceoSalary: number,            // 설계할 대표이사 급여 (억)
+  otherPersonalIncome: number,  // 기타 개인소득 (억)
+  assets: Asset[],              // 현물출자 대상 자산
+): {
+  personalTax: number;          // 현행 개인 납세액 (억)
+  corpTax: number;              // 법인세 (억)
+  ceoIncomeTax: number;         // 대표이사 급여 소득세 (억)
+  totalCorpBurden: number;      // 법인세 + 대표이사 소득세 (억)
+  annualSaving: number;         // 연간 절세액 (억, 양수면 법인 유리)
+  transferTax: number;          // 현물출자 취득세 — 50% 경감 적용 (억)
+  paybackYears: number;         // 전환비용 회수 기간 (년)
+  notes: string[];
+} {
+  // 개인: 임대+기타소득 종합과세
+  const personalTax = calcIncomeTax(annualRentalIncome + otherPersonalIncome)
+                    - calcIncomeTax(otherPersonalIncome);  // 임대분만 추출
+
+  // 법인: 임대소득 − 대표이사 급여(손금) = 과세소득
+  const corpTaxableIncome = Math.max(0, annualRentalIncome - ceoSalary);
+  const corpTax = calcCorporateTax(corpTaxableIncome);
+
+  // 대표이사: 급여 소득세 (기타소득과 합산)
+  const ceoIncomeTax = calcIncomeTax(ceoSalary + otherPersonalIncome)
+                     - calcIncomeTax(otherPersonalIncome);
+
+  const totalCorpBurden = corpTax + ceoIncomeTax;
+  const annualSaving    = personalTax - totalCorpBurden;
+
+  // 현물출자 취득세: 부동산 시가 × 4% × 50% 경감 = 2% (조특법 §119, ~2027.12.31)
+  const reValue = assets
+    .filter(a => ['주거용부동산', '상업용부동산', '토지'].includes(a.asset_type))
+    .reduce((s, a) => s + a.current_value, 0);
+  const transferTax = reValue * 0.02;
+
+  const paybackYears = annualSaving > 0
+    ? Math.ceil(transferTax / annualSaving)
+    : 999;
+
+  const notes = [
+    `현물출자 시 양도소득세 이월과세 가능 (조특법 §32) — 법인이 자산 양도할 때 납부`,
+    `취득세 50% 경감 (~2027년 12월 31일까지)`,
+    `법인세율 2026년: 10% / 20% / 22% / 25% (지방소득세 +10% 별도)`,
+    `대표이사 급여는 법인 손금산입 → 법인 과세소득 절감`,
+    `배당 시 배당소득세 14% 추가 발생 (2천만원 초과 시 종합과세)`,
+    `법인 전환 후 5년 내 부동산 매각 시 이월과세 취소 위험`,
+    `소득분산 효과: 배우자·자녀에게 주식 증여로 배당소득 분산 가능`,
+  ];
+
+  return {
+    personalTax, corpTax, ceoIncomeTax, totalCorpBurden,
+    annualSaving, transferTax, paybackYears, notes,
+  };
 }

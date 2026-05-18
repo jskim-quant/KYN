@@ -62,9 +62,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <aside className="w-56 bg-white border-r border-gray-200 flex flex-col fixed h-full z-10">
         <div className="p-4 border-b border-gray-100">
           <Link href="/" className="flex items-center gap-2.5">
-            <div className="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center">
-              <span className="text-white font-bold text-xs tracking-wider">KYN</span>
-            </div>
+            <img src="/icon.svg" alt="KYN" className="w-9 h-9 rounded-xl"/>
             <div>
               <div className="text-sm font-bold text-gray-900">KYN</div>
               <div className="text-xs text-gray-400">Family Wealth, Rooted.</div>

@@ -178,3 +178,32 @@ export interface CashflowResult {
   debtBalance: number;
   netWorth: number;
 }
+
+export interface FamilyLoanAnalysis {
+  fairInterest: number;
+  actualInterest: number;
+  interestGap: number;
+  isGiftTaxable: boolean;
+  annualGiftTax: number;
+  maxZeroRatePrincipal: number;
+  riskLevel: 'safe' | 'caution' | 'danger';
+  recommendation: string;
+}
+
+export interface CorpLoanImputed {
+  imputedInterest: number;
+  corpTaxImpact: number;
+  recipientIncomeTax: number;
+  totalTaxCost: number;
+}
+
+export interface CorpConversionResult {
+  personalTax: number;
+  corpTax: number;
+  ceoIncomeTax: number;
+  totalCorpBurden: number;
+  annualSaving: number;
+  transferTax: number;
+  paybackYears: number;
+  notes: string[];
+}
