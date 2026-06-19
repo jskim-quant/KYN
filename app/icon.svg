@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <rect x="2" y="2" width="96" height="96" rx="22" fill="#FFFFFF" stroke="#E2E2E0" stroke-width="1.5"></rect>
+  <text x="50" y="45" font-family="&#39;Noto Serif KR&#39;, Georgia, serif" font-size="54" font-weight="500" fill="#9A7B2E" text-anchor="middle" dominant-baseline="central">K</text>
+  <rect x="37" y="74" width="26" height="2.6" fill="#1C1D1F"></rect>
+</svg>

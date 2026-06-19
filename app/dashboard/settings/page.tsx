@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { MacroSettings } from '@/types';
+import { KynLoader } from '@/app/dashboard/components/KynLoader';
 
 function Field({ label, sub, children }: { label: string; sub?: string; children: React.ReactNode }) {
   return (
@@ -83,13 +84,16 @@ export default function SettingsPage() {
     };
   }
 
-  if (loading) return <div className="p-8 text-sm text-gray-400">로딩 중...</div>;
+  if (loading) return <KynLoader />;
 
   return (
     <div className="p-8 max-w-2xl">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">설정</h1>
-        <p className="text-sm text-gray-500 mt-1">가족 정보 및 거시 변수 설정</p>
+      <div className="page-header">
+        <div>
+          <div className="section-label">Configuration</div>
+          <h1 className="page-title">설정</h1>
+          <p className="page-sub">가족 정보 및 거시 변수 설정</p>
+        </div>
       </div>
 
       {savedMsg && (
@@ -132,7 +136,7 @@ export default function SettingsPage() {
         <div className="flex items-center justify-between mb-4">
           <div>
             <div className="text-sm font-semibold text-gray-700">거시 변수</div>
-            <div className="text-xs text-gray-400 mt-0.5">시나리오·시뮬레이션에 사용되는 가정값</div>
+            <div className="text-xs text-gray-400 mt-0.5">금리 변화가 납부 계획에 미치는 영향을 점검합니다</div>
           </div>
           <button onClick={saveMacro} disabled={savingMacro} className="btn-primary text-sm">
             {savingMacro ? '저장 중...' : '저장'}
@@ -153,28 +157,9 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {/* 자산 성장률 */}
-          <div>
-            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">자산 연간 성장률 (%)</div>
-            <div className="grid grid-cols-3 gap-3">
-              <Field label="아파트">
-                <input type="number" step="0.5" className="input" {...mf('apt_growth_pct')} />
-              </Field>
-              <Field label="토지">
-                <input type="number" step="0.5" className="input" {...mf('land_growth_pct')} />
-              </Field>
-              <Field label="상업용부동산">
-                <input type="number" step="0.5" className="input" {...mf('commercial_growth_pct')} />
-              </Field>
-            </div>
-          </div>
-
-          {/* 물가 */}
-          <div>
-            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">기타</div>
-            <Field label="물가 상승률 (%)">
-              <input type="number" step="0.1" className="input w-1/2" {...mf('inflation_pct')} />
-            </Field>
+          <div className="callout">
+            <strong>자산 성장률은 자산 목록에서 관리합니다.</strong><br />
+            부동산, 예금, 주식처럼 자산마다 전망이 다르므로 각 자산의 기대 성장률을 개별 입력합니다.
           </div>
         </div>
 
@@ -184,17 +169,13 @@ export default function SettingsPage() {
           <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-gray-600">
             <div>기준금리: <b>{macroForm.base_rate_pct ?? 3.5}%</b></div>
             <div>스트레스: +<b>{macroForm.rate_shock_pct ?? 1.5}%p</b></div>
-            <div>아파트 성장: <b>{macroForm.apt_growth_pct ?? 2.5}%</b></div>
-            <div>토지 성장: <b>{macroForm.land_growth_pct ?? 2.0}%</b></div>
-            <div>상업 성장: <b>{macroForm.commercial_growth_pct ?? 1.5}%</b></div>
-            <div>물가: <b>{macroForm.inflation_pct ?? 2.0}%</b></div>
           </div>
         </div>
       </section>
 
       {/* 세법 기준 안내 */}
       <section className="card border-blue-100 bg-blue-50">
-        <div className="text-sm font-semibold text-blue-800 mb-3">📋 적용 세법 기준 (2026년)</div>
+        <div className="text-sm font-semibold text-blue-800 mb-3">📋 현행 시행 법령 기준</div>
         <div className="space-y-1.5 text-xs text-blue-700">
           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
             <div>• 상속·증여세율: <b>10% ~ 50%</b> (5단계)</div>
@@ -208,10 +189,10 @@ export default function SettingsPage() {
             <div>• 법인세: <b>10%/20%/22%/25%</b> (2026~)</div>
             <div>• 차용증 적정이자율: <b>4.6%</b></div>
             <div>• 무이자 한도: <b>약 2.17억원</b></div>
-            <div>• 현물출자 취득세 경감: <b>50%</b> (~2027.12)</div>
+            <div>• 현물출자 지방세 감면: <b>개별 요건 확인</b></div>
           </div>
           <div className="mt-2 text-blue-600 border-t border-blue-200 pt-2">
-            ※ 2026년 상속세 개정(자녀공제 5억, 최고세율 40%)은 국회 부결 — 현행 유지
+            ※ 자녀공제 5억원·최고세율 40% 정부 개정안은 시행 법령에 반영되지 않았습니다. 현재 계산에는 적용하지 않습니다.
           </div>
         </div>
       </section>

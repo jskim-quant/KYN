@@ -1,89 +1,85 @@
 import Link from 'next/link';
-import { createServerSupabaseClient } from '@/lib/supabase';
-import { redirect } from 'next/navigation';
+import { Noto_Serif_KR, Noto_Sans_KR } from 'next/font/google';
 
-export default async function HomePage() {
-  const supabase = createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (user) redirect('/dashboard');
+const serif = Noto_Serif_KR({ subsets: ['latin'], weight: ['300','400','500','600'] });
+const sans  = Noto_Sans_KR ({ subsets: ['latin'], weight: ['300','400','500','700'] });
 
+export default function HomePage() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 flex flex-col">
+    <div className={`lp ${sans.className}`}>
+
       {/* Nav */}
-      <nav className="px-6 py-4 flex items-center justify-between max-w-6xl mx-auto w-full">
-        <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 bg-blue-500 rounded-xl flex items-center justify-center">
-            <span className="text-white font-bold text-sm tracking-wider">KYN</span>
-          </div>
-          <div>
-            <div className="text-white font-bold text-sm leading-tight">KYN</div>
-            <div className="text-slate-400 text-xs leading-tight">가족 자산의 뿌리</div>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <Link href="/auth/login" className="text-slate-300 hover:text-white text-sm transition-colors">
-            로그인
-          </Link>
-          <Link href="/auth/signup" className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
-            무료 시작
-          </Link>
+      <nav className="lp-nav">
+        <Link href="/" style={{ textDecoration: 'none' }}>
+          <span className="kyn-wordmark">KYN</span>
+        </Link>
+        <div className="lp-nav-right">
+          <Link href="/auth/login" className="lp-navlink">로그인</Link>
+          <Link href="/auth/signup" className="lp-btn-sm">시작하기</Link>
         </div>
       </nav>
 
-      {/* Hero */}
-      <main className="flex-1 flex flex-col items-center justify-center px-6 py-16 text-center max-w-4xl mx-auto w-full">
-        <div className="inline-flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs font-medium px-3 py-1.5 rounded-full mb-8">
-          한국 세법 기반 가족 자산 최적화 엔진
-        </div>
+      {/* Split */}
+      <div className="lp-split">
 
-        <div className="mb-4">
-          <span className="text-7xl md:text-8xl font-bold text-white tracking-tight">KYN</span>
-        </div>
-        <p className="text-slate-400 text-lg mb-3">가족 자산의 뿌리</p>
-        <p className="text-slate-500 text-sm mb-10 max-w-xl">
-          증여세·상속세·양도세를 통합 계산하고, 법인·신탁·재단 구조를 비교해
-          최적의 자산 이전 전략을 자동으로 추천합니다.
-        </p>
-
-        <div className="flex flex-col sm:flex-row gap-4 mb-16">
-          <Link href="/auth/signup"
-            className="bg-blue-600 text-white px-8 py-3.5 rounded-xl text-base font-semibold hover:bg-blue-700 transition-colors">
-            가족 계정 만들기 →
-          </Link>
-          <Link href="/auth/login"
-            className="bg-white/10 text-white border border-white/20 px-8 py-3.5 rounded-xl text-base font-medium hover:bg-white/20 transition-colors">
-            초대 코드로 합류
-          </Link>
-        </div>
-
-        {/* Features */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full text-left">
-          {[
-            { icon: '🏠', title: '다자산 통합 관리',
-              desc: '부동산·금융·비상장주식을 한 곳에서. 취득가·취득일 기반 정확한 세금 계산.' },
-            { icon: '⚖️', title: '세무조사 리스크 사전 체크',
-              desc: 'PCI 역산으로 리스크 미리 파악. 자금출처 소명 준비 가이드.' },
-            { icon: '🎯', title: '10가지 시나리오 비교',
-              desc: '개인·법인·신탁·재단 구조를 10년 순자산 기준으로 자동 비교 추천.' },
-            { icon: '👨‍👩‍👧‍👦', title: '가족 공동 접근',
-              desc: '초대 코드 하나로 가족 전체가 같은 데이터를 실시간 공유.' },
-            { icon: '📊', title: '현금흐름 방어 시나리오',
-              desc: '금리 스트레스·보유세 부담으로 자산을 얼마나 오래 버틸 수 있는지 계산.' },
-            { icon: '📄', title: '상담 리포트 자동 생성',
-              desc: '세무사 상담용 PDF를 클릭 한 번으로. 지금 당장 해야 할 것 체크리스트.' },
-          ].map(f => (
-            <div key={f.title} className="bg-white/5 border border-white/10 rounded-xl p-5">
-              <div className="text-2xl mb-3">{f.icon}</div>
-              <div className="text-white font-semibold text-sm mb-1.5">{f.title}</div>
-              <div className="text-slate-400 text-xs leading-relaxed">{f.desc}</div>
+        {/* LEFT — Hero */}
+        <section className="lp-left">
+          <div className="hero">
+            <span className="hero-eyebrow">가족 자산 이전 설계 엔진</span>
+            <h1 className={`lp-h1 ${serif.className}`}>
+              부의 이전
+              <span className="hero-line2">설계하는 가족</span>
+            </h1>
+            <p className="hero-sub">
+              자산은 충분하지만, 현금은 부족합니다.<br />
+              설계가 없으면 무너지는 건 세금이 아니라 <strong>자산</strong>입니다.
+            </p>
+            <div className="cta-row">
+              <Link href="/auth/signup" className="cta-primary">가족 계정 만들기</Link>
+              <Link href="/auth/signup" className="cta-link">→ 초대 코드로 합류</Link>
             </div>
-          ))}
-        </div>
-      </main>
+          </div>
+        </section>
 
-      <footer className="text-center py-6 text-slate-600 text-xs">
-        KYN · 의사결정 보조 도구입니다. 실제 세금 신고 전 세무사 확인 필수.
-      </footer>
+        {/* RIGHT — Questions + Tools */}
+        <aside className="lp-right">
+          <div>
+            <div className="col-label">핵심 질문</div>
+            <div className="qlist">
+              {[
+                { n: '01', q: '현금흐름이 버틸 수 있는가', p: '상속 발생 후 6개월. 임대수익·담보대출·예금으로 세금을 감당할 수 있는지 연도별로 계산합니다.' },
+                { n: '02', q: '어떤 자산을, 언제, 누구에게', p: '지금 증여할지·10년 뒤 공제를 리셋해 이전할지·세대를 건너뛸지, 세후 순자산으로 비교합니다.' },
+                { n: '03', q: '금리·공실·가격 하락에도 견디는가', p: '금리 +2%p, 공실 상승 시나리오에서 납부 계획이 무너지는 시점을 미리 찾아냅니다.' },
+              ].map(item => (
+                <div key={item.n} className="qitem">
+                  <span className={`qn ${serif.className}`}>{item.n}</span>
+                  <div>
+                    <h4>{item.q}</h4>
+                    <p>{item.p}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="col-label">설계 도구</div>
+            <div className="tools">
+              {[
+                { t: '현금흐름 회생 진단', d: '6개월 내 부족액 — 급매 없이 버틸 수 있는 한계' },
+                { t: '전략 시나리오 비교', d: '7가지 이전 전략을 10년 순자산 기준으로 비교' },
+                { t: '납부 재원 설계', d: '연부연납·담보대출·임대수익을 조합한 재원 계획' },
+              ].map(tool => (
+                <div key={tool.t} className="tool">
+                  <div className="tool-t">{tool.t}</div>
+                  <div className="tool-d">{tool.d}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </aside>
+      </div>
+
     </div>
   );
 }

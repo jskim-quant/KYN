@@ -5,13 +5,13 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase';
 
 export default function SignupPage() {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [name, setName]           = useState('');
+  const [email, setEmail]         = useState('');
+  const [password, setPassword]   = useState('');
   const [inviteCode, setInviteCode] = useState('');
-  const [mode, setMode] = useState<'new' | 'join'>('new');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [mode, setMode]           = useState<'new' | 'join'>('new');
+  const [error, setError]         = useState('');
+  const [loading, setLoading]     = useState(false);
   const router = useRouter();
   const supabase = createClient();
 
@@ -23,18 +23,15 @@ export default function SignupPage() {
 
     setLoading(true); setError('');
     try {
-      // 1. 회원가입
       const { error: signupError } = await supabase.auth.signUp({
         email, password,
         options: { data: { name } },
       });
       if (signupError) throw signupError;
 
-      // 2. 바로 로그인
       const { error: loginError } = await supabase.auth.signInWithPassword({ email, password });
       if (loginError) throw loginError;
 
-      // 3. 가족 생성 (로그인 후에 호출)
       if (mode === 'new') {
         await supabase.rpc('create_family', { family_name: `${name} 가족` });
       } else {
@@ -45,84 +42,165 @@ export default function SignupPage() {
       }
 
       router.push('/dashboard');
-    } catch (err: any) {
-      setError(err.message || '오류가 발생했습니다.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : '오류가 발생했습니다.');
     } finally {
       setLoading(false);
     }
   }
 
+  const inputStyle = {
+    width: '100%',
+    padding: '12px 14px',
+    fontSize: 13,
+    border: '1px solid #D8D8D6',
+    background: '#FFFFFF',
+    color: '#1E1E20',
+    outline: 'none',
+    fontFamily: 'inherit',
+    boxSizing: 'border-box' as const,
+  };
+
+  const labelStyle = {
+    display: 'block',
+    fontSize: 10,
+    letterSpacing: 1,
+    color: '#8E8E93',
+    textTransform: 'uppercase' as const,
+    marginBottom: 8,
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <Link href="/" className="inline-flex items-center gap-2 mb-4">
-            <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center mx-auto">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-              </svg>
-            </div>
-          </Link>
-          <h1 className="text-2xl font-bold text-gray-900">계정 만들기</h1>
-          <p className="text-sm text-gray-500 mt-1">KYN 시작하기</p>
-        </div>
+    <div style={{ minHeight: '100vh', background: '#FFFFFF', display: 'flex', flexDirection: 'column' }}>
 
-        {/* Mode tabs */}
-        <div className="flex bg-gray-100 rounded-xl p-1 mb-6">
-          <button
-            onClick={() => setMode('new')}
-            className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${mode === 'new' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
-              }`}
-          >새 가족 만들기</button>
-          <button
-            onClick={() => setMode('join')}
-            className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${mode === 'join' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
-              }`}
-          >초대 코드 합류</button>
-        </div>
+      {/* Top bar */}
+      <div style={{ width: '100%', height: 2, background: '#1E1E20' }} />
 
-        <div className="card">
-          <form onSubmit={handleSignup} className="space-y-4">
-            <div>
-              <label className="label">이름</label>
-              <input className="input" placeholder="김준성" value={name}
-                onChange={e => setName(e.target.value)} />
+      {/* Nav */}
+      <nav style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '22px 48px', borderBottom: '1px solid #D8D8D6' }}>
+        <Link href="/" className="kyn-wordmark" style={{ textDecoration: 'none' }}>
+          KYN
+        </Link>
+        <Link href="/auth/login" style={{ fontSize: 12.5, color: '#8E8E93', border: '1px solid #D8D8D6', padding: '4px 10px', textDecoration: 'none', fontWeight: 300 }}>
+          로그인
+        </Link>
+      </nav>
+
+      {/* Form */}
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <div style={{ width: '100%', maxWidth: 380 }}>
+
+          {/* 헤더 */}
+          <div style={{ marginBottom: 36 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+              <div style={{ width: 20, height: 1, background: '#B8973A' }} />
+              <span style={{ fontSize: 9, letterSpacing: 2, color: '#8E8E93', textTransform: 'uppercase' as const }}>Create Account</span>
             </div>
-            <div>
-              <label className="label">이메일</label>
-              <input type="email" className="input" placeholder="example@email.com" value={email}
-                onChange={e => setEmail(e.target.value)} />
+            <h1 style={{ fontFamily: 'var(--serif)', fontSize: 32, fontWeight: 300, color: '#1E1E20', letterSpacing: -1, marginBottom: 6 }}>
+              계정 만들기
+            </h1>
+            <p style={{ fontSize: 12.5, color: '#8E8E93', fontWeight: 300 }}>
+              KYN 가족 자산 플래너
+            </p>
+          </div>
+
+          {/* 모드 탭 */}
+          <div style={{ display: 'flex', border: '1px solid #D8D8D6', marginBottom: 28 }}>
+            {(['new', 'join'] as const).map((m, i) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  fontSize: 11,
+                  fontWeight: mode === m ? 500 : 300,
+                  color: mode === m ? '#1E1E20' : '#8E8E93',
+                  background: mode === m ? '#F2F2F0' : '#FFFFFF',
+                  border: 'none',
+                  borderLeft: i === 1 ? '1px solid #D8D8D6' : 'none',
+                  cursor: 'pointer',
+                  letterSpacing: 0.5,
+                }}>
+                {m === 'new' ? '새 가족 만들기' : '초대 코드 합류'}
+              </button>
+            ))}
+          </div>
+
+          {/* 입력 폼 */}
+          <form onSubmit={handleSignup}>
+            <div style={{ marginBottom: 16 }}>
+              <label style={labelStyle}>이름</label>
+              <input
+                value={name}
+                onChange={e => setName(e.target.value)}
+                placeholder="홍길동"
+                autoFocus
+                style={inputStyle}
+              />
             </div>
-            <div>
-              <label className="label">비밀번호 (6자 이상)</label>
-              <input type="password" className="input" value={password}
-                onChange={e => setPassword(e.target.value)} />
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={labelStyle}>이메일</label>
+              <input
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="example@email.com"
+                style={inputStyle}
+              />
+            </div>
+
+            <div style={{ marginBottom: mode === 'join' ? 16 : 24 }}>
+              <label style={labelStyle}>비밀번호 (6자 이상)</label>
+              <input
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                style={inputStyle}
+              />
             </div>
 
             {mode === 'join' && (
-              <div>
-                <label className="label">가족 초대 코드</label>
-                <input className="input uppercase tracking-widest text-center text-lg font-mono"
-                  placeholder="ABC123" maxLength={6} value={inviteCode}
-                  onChange={e => setInviteCode(e.target.value.toUpperCase())} />
-                <p className="text-xs text-gray-400 mt-1">가족 구성원에게 코드를 받으세요</p>
+              <div style={{ marginBottom: 24 }}>
+                <label style={labelStyle}>초대 코드</label>
+                <input
+                  value={inviteCode}
+                  onChange={e => setInviteCode(e.target.value)}
+                  placeholder="XXXXXX"
+                  style={{ ...inputStyle, letterSpacing: 3, textTransform: 'uppercase' }}
+                />
               </div>
             )}
 
-            {error && <div className="error-box">{error}</div>}
+            {error && (
+              <div style={{ marginBottom: 16, padding: '10px 14px', border: '1px solid #D8D8D6', fontSize: 12, color: '#8E8E93', borderLeft: '2px solid #1E1E20' }}>
+                {error}
+              </div>
+            )}
 
-            <button type="submit" disabled={loading} className="btn-primary w-full">
+            <button
+              type="submit"
+              disabled={loading || !name || !email || !password}
+              style={{ width: '100%', padding: '14px', fontSize: 10, letterSpacing: 2, textTransform: 'uppercase' as const, background: loading ? '#8E8E93' : '#1E1E20', color: '#FFFFFF', border: '1.5px solid #B8973A', cursor: loading ? 'not-allowed' : 'pointer', fontWeight: 500 }}>
               {loading ? '처리 중...' : mode === 'new' ? '가족 계정 만들기' : '가족에 합류하기'}
             </button>
           </form>
-        </div>
 
-        <p className="text-center text-sm text-gray-500 mt-4">
-          이미 계정이 있으신가요?{' '}
-          <Link href="/auth/login" className="text-blue-600 font-medium hover:underline">
-            로그인
-          </Link>
-        </p>
+          {/* 하단 링크 */}
+          <div style={{ marginTop: 28, paddingTop: 24, borderTop: '1px solid #D8D8D6', display: 'flex', justifyContent: 'center', gap: 6 }}>
+            <span style={{ fontSize: 12, color: '#8E8E93', fontWeight: 300 }}>이미 계정이 있으신가요?</span>
+            <Link href="/auth/login" style={{ fontSize: 12, color: '#1E1E20', textDecoration: 'none', fontWeight: 400, borderBottom: '1px solid #D8D8D6' }}>
+              로그인
+            </Link>
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom */}
+      <div style={{ borderTop: '1px solid #D8D8D6', padding: '14px 52px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontSize: 9, color: '#8E8E93' }}>의사결정 보조 도구 · 실제 세금 신고 전 세무사 확인 필수</span>
+        <span style={{ fontSize: 9, color: '#8E8E93' }}>KYN © 2026</span>
       </div>
     </div>
   );

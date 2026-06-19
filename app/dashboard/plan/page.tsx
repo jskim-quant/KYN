@@ -1,827 +1,366 @@
 'use client';
-import { useEffect, useState } from 'react';
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { createClient } from '@/lib/supabase';
-import { Asset, FamilyMember, MacroSettings, TransferPlan, TransferType } from '@/types';
+import { Asset, FamilyMember, TransferPlan, TransferType } from '@/types';
+import { KynLoader } from '@/app/dashboard/components/KynLoader';
 import {
-  calcGiftTax, calcCapitalGainsTax, calcInheritanceTax,
-  generateDistributionStrategies,
-  FamilyDistributionStrategy, StrategyAction,
-} from '@/lib/tax';
+  RECIPIENT_ASSIGNMENT_NOTE,
+  isRecipientAssignmentPlan,
+} from '@/lib/transfer-plan';
 
-// ── 상수 ──────────────────────────────────────────────────────
-const TRANSFER_TYPES: TransferType[] = [
-  '증여(생전)', '상속(사후)', '세대생략증여', '지분증여', '법인이전', '매각후분배', '가족간대출',
-];
-const TYPE_DESC: Record<string, string> = {
-  '증여(생전)':   '생전에 자산을 직접 이전 — 증여세 발생',
-  '상속(사후)':   '사망 후 상속 — 상속세 발생',
-  '세대생략증여': '손자녀에게 직접 증여 — 30% 할증',
-  '지분증여':     '부동산 지분 일부를 점진적으로 이전',
-  '법인이전':     '법인 설립 후 자산 이전 — 법인세 구조',
-  '매각후분배':   '자산 매각 → 현금으로 분배',
-  '가족간대출':   '차용증 기반 자금 이전 — 이자율 4.6% 적용',
-};
-const PRIORITY_COLORS: Record<string, string> = {
-  '즉시': 'bg-red-100 text-red-700',
-  '단기': 'bg-orange-100 text-orange-700',
-  '중기': 'bg-yellow-100 text-yellow-700',
-  '장기': 'bg-green-100 text-green-700',
-};
-const DEDUCTION_DISPLAY: Record<string, string> = {
-  '배우자': '6억/10년',
-  '자녀': '5천만/10년',
-  '손자녀': '2천만/10년',
-  '며느리': '1천만/10년',
-  '사위': '1천만/10년',
-  '부모': '5천만/10년',
-  '기타': '1천만/10년',
-};
+type MainTab = 'summary' | 'assign';
 
-// ── 포매터 ────────────────────────────────────────────────────
-function fmt(n: number, d = 1) {
-  if (n === 0) return '0억';
-  return (Math.round(n * Math.pow(10, d)) / Math.pow(10, d)).toLocaleString('ko-KR') + '억';
-}
-function fmtPct(n: number) {
-  return n.toFixed(1) + '%';
+interface AssetAssignmentAction {
+  assetId: string;
+  recipientIds: string[];
 }
 
-// ── 빈 폼 ────────────────────────────────────────────────────
-const EMPTY = {
-  asset_id: '', from_member_id: '', to_member_id: '',
-  transfer_type: '증여(생전)' as TransferType,
-  transfer_pct: 100, year_offset: 1,
-  priority: '중기', notes: '',
-};
+function fmt(value: number): string {
+  if (!Number.isFinite(value)) return '0억';
+  if (Math.abs(value) >= 1) return `${value.toLocaleString('ko-KR', { maximumFractionDigits: 1 })}억`;
+  return `${Math.round(value * 10000).toLocaleString('ko-KR')}만원`;
+}
 
-type MainTab = 'plans' | 'distribute';
-type WizardStep = 1 | 2 | 3;
-
-// ── 메인 페이지 ───────────────────────────────────────────────
 export default function PlanPage() {
-  const [plans, setPlans]     = useState<TransferPlan[]>([]);
-  const [assets, setAssets]   = useState<Asset[]>([]);
+  const supabase = useMemo(() => createClient(), []);
+  const assignmentRef = useRef<HTMLDivElement>(null);
+  const [plans, setPlans] = useState<TransferPlan[]>([]);
+  const [assets, setAssets] = useState<Asset[]>([]);
   const [members, setMembers] = useState<FamilyMember[]>([]);
-  const [macro, setMacro]     = useState<MacroSettings | null>(null);
-  const [form, setForm]       = useState({ ...EMPTY });
-  const [editing, setEditing] = useState<string | null>(null);
-  const [open, setOpen]       = useState(false);
-  const [saving, setSaving]   = useState(false);
+  const [familyId, setFamilyId] = useState('');
   const [loading, setLoading] = useState(true);
-  const [familyId, setFamilyId] = useState<string | null>(null);
-  const [mainTab, setMainTab] = useState<MainTab>('plans');
-  const supabase = createClient();
+  const [saving, setSaving] = useState(false);
+  const [mainTab, setMainTab] = useState<MainTab>('assign');
 
-  useEffect(() => { load(); }, []);
-
-  async function load() {
-    const { data: p } = await supabase.from('profiles').select('family_id').single();
-    if (!p?.family_id) { setLoading(false); return; }
-    setFamilyId(p.family_id);
-    const [{ data: pl }, { data: a }, { data: m }, { data: ms }] = await Promise.all([
-      supabase
-        .from('transfer_plans')
-        .select('*, asset:assets(*), from_member:family_members!from_member_id(*), to_member:family_members!to_member_id(*)')
-        .eq('family_id', p.family_id)
-        .order('year_offset'),
-      supabase.from('assets').select('*').eq('family_id', p.family_id),
-      supabase.from('family_members').select('*').eq('family_id', p.family_id),
-      supabase.from('macro_settings').select('*').eq('family_id', p.family_id).single(),
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data: profile } = await supabase.from('profiles').select('family_id').single();
+    if (!profile?.family_id) { setLoading(false); return; }
+    setFamilyId(profile.family_id);
+    const [planResult, assetResult, memberResult] = await Promise.all([
+      supabase.from('transfer_plans').select('*').eq('family_id', profile.family_id).order('year_offset', { ascending: true }),
+      supabase.from('assets').select('*').eq('family_id', profile.family_id),
+      supabase.from('family_members').select('*').eq('family_id', profile.family_id).order('generation', { ascending: true }),
     ]);
-    setPlans((pl as TransferPlan[]) || []);
-    setAssets(a || []);
-    setMembers(m || []);
-    setMacro(ms || null);
+    setPlans((planResult.data ?? []) as TransferPlan[]);
+    setAssets((assetResult.data ?? []) as Asset[]);
+    setMembers((memberResult.data ?? []) as FamilyMember[]);
     setLoading(false);
-  }
+  }, [supabase]);
 
-  function estimateTax(f: typeof form): number {
-    const asset    = assets.find(a => a.id === f.asset_id);
-    const toMember = members.find(m => m.id === f.to_member_id);
-    if (!asset || !toMember) return 0;
-    const transferValue = asset.current_value * (f.transfer_pct / 100);
-    if (f.transfer_type === '증여(생전)' || f.transfer_type === '지분증여') {
-      return calcGiftTax(transferValue, toMember.relation);
-    }
-    if (f.transfer_type === '세대생략증여') {
-      return calcGiftTax(transferValue, toMember.relation, 0, true);
-    }
-    if (f.transfer_type === '매각후분배') {
-      return calcCapitalGainsTax({ ...asset, current_value: transferValue });
-    }
-    return 0;
-  }
+  useEffect(() => { void load(); }, [load]);
 
-  function openNew() { setForm({ ...EMPTY }); setEditing(null); setOpen(true); }
-  function openEdit(pl: TransferPlan) {
-    setForm({
-      asset_id: pl.asset_id || '', from_member_id: pl.from_member_id || '',
-      to_member_id: pl.to_member_id || '', transfer_type: pl.transfer_type,
-      transfer_pct: pl.transfer_pct, year_offset: pl.year_offset,
-      priority: pl.priority, notes: pl.notes || '',
+  const assignmentPlans = useMemo(() => plans.filter(isRecipientAssignmentPlan), [plans]);
+
+  const assignmentsByAsset = useMemo(() => {
+    const grouped = new Map<string, TransferPlan[]>();
+    assignmentPlans.forEach((plan) => {
+      if (!plan.asset_id) return;
+      const current = grouped.get(plan.asset_id) ?? [];
+      current.push(plan);
+      grouped.set(plan.asset_id, current);
     });
-    setEditing(pl.id); setOpen(true);
-  }
+    return grouped;
+  }, [assignmentPlans]);
 
-  async function save() {
-    if (!familyId) return;
+  const assignedAssets = useMemo(() => assets.filter((a) => assignmentsByAsset.has(a.id)), [assets, assignmentsByAsset]);
+  const assignedRecipientIds = useMemo(() => {
+    const ids = assignmentPlans.map((p) => p.to_member_id).filter((id): id is string => Boolean(id));
+    return new Set(ids);
+  }, [assignmentPlans]);
+  const assignedValue = assignedAssets.reduce((s, a) => s + a.current_value, 0);
+  const multiRecipientAssetCount = assignedAssets.filter((a) => (assignmentsByAsset.get(a.id)?.length ?? 0) > 1).length;
+
+  const saveAssignments = async (actions: AssetAssignmentAction[]) => {
+    if (!familyId || saving) return;
     setSaving(true);
-    const estimated_tax = estimateTax(form);
-    const payload = {
-      family_id: familyId,
-      asset_id: form.asset_id || null,
-      from_member_id: form.from_member_id || null,
-      to_member_id: form.to_member_id || null,
-      transfer_type: form.transfer_type,
-      transfer_pct: form.transfer_pct,
-      year_offset: form.year_offset,
-      priority: form.priority,
-      estimated_tax,
-      notes: form.notes,
-    };
-    if (editing) {
-      await supabase.from('transfer_plans').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', editing);
-    } else {
-      await supabase.from('transfer_plans').insert(payload);
+    const affectedAssetIds = new Set(actions.map((a) => a.assetId));
+    const replacedPlans = assignmentPlans.filter((p) => p.asset_id && affectedAssetIds.has(p.asset_id));
+    const newRows = actions.flatMap((action) => {
+      const asset = assets.find((a) => a.id === action.assetId);
+      if (!asset || action.recipientIds.length === 0) return [];
+      return action.recipientIds.map((recipientId) => ({
+        family_id: familyId, asset_id: asset.id,
+        from_member_id: asset.owner_member_id, to_member_id: recipientId,
+        transfer_type: '상속(사후)' as TransferType,
+        transfer_pct: 100 / action.recipientIds.length,
+        year_offset: 0, priority: '미정', estimated_tax: 0,
+        notes: `${RECIPIENT_ASSIGNMENT_NOTE}: 자산별 수증자 후보 지정`,
+      }));
+    });
+    if (newRows.length > 0) {
+      const { error } = await supabase.from('transfer_plans').insert(newRows);
+      if (error) { alert(`배정 저장에 실패했습니다: ${error.message}`); setSaving(false); return; }
     }
-    await load(); setOpen(false); setSaving(false);
-  }
-
-  async function del(id: string) {
-    if (!confirm('삭제하시겠습니까?')) return;
-    await supabase.from('transfer_plans').delete().eq('id', id);
-    setPlans(pl => pl.filter(x => x.id !== id));
-  }
-
-  async function addStrategyActions(actions: StrategyAction[]) {
-    if (!familyId) return;
-    const selfMember = members.find(m => m.relation === '본인');
-    const rows = actions.map(a => ({
-      family_id: familyId,
-      asset_id: a.assetId,
-      from_member_id: selfMember?.id ?? null,
-      to_member_id: a.recipientId,
-      transfer_type: '증여(생전)' as TransferType,
-      transfer_pct: Math.round(a.transferPct * 10) / 10,
-      year_offset: a.yearOffset,
-      priority: a.yearOffset === 0 ? '즉시' : a.yearOffset <= 1 ? '단기' : a.yearOffset <= 5 ? '중기' : '장기',
-      estimated_tax: a.giftTax,
-      notes: `배분 설계 자동 생성 · ${a.carryOverWarning ? '⚠ 5년 내 매각 시 이월과세 주의' : ''}`,
+    if (replacedPlans.length > 0) {
+      const { error } = await supabase.from('transfer_plans').delete().in('id', replacedPlans.map((p) => p.id));
+      if (error) { alert(`기존 후보 정리에 실패했습니다: ${error.message}`); setSaving(false); await load(); return; }
+    }
+    await Promise.all(actions.map((action) => {
+      const hasActualPlan = plans.some((p) => p.asset_id === action.assetId && !isRecipientAssignmentPlan(p));
+      return supabase.from('assets').update({ is_planned_transfer: action.recipientIds.length > 0 || hasActualPlan }).eq('id', action.assetId);
     }));
-    await supabase.from('transfer_plans').insert(rows);
+    setSaving(false);
     await load();
-    setMainTab('plans');
-  }
+    setMainTab('summary');
+    assignmentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
-  const totalEstimatedTax = plans.reduce((s, p) => s + (p.estimated_tax || 0), 0);
-  const grouped = plans.reduce<Record<number, TransferPlan[]>>((acc, p) => {
-    (acc[p.year_offset] ??= []).push(p); return acc;
-  }, {});
+  const clearAssetAssignment = async (assetId: string) => {
+    if (!confirm('이 자산의 수증자 후보 배정을 해제할까요?')) return;
+    const planIds = assignmentPlans.filter((p) => p.asset_id === assetId).map((p) => p.id);
+    if (planIds.length > 0) {
+      const { error } = await supabase.from('transfer_plans').delete().in('id', planIds);
+      if (error) { alert(`배정 해제에 실패했습니다: ${error.message}`); return; }
+    }
+    const hasActualPlan = plans.some((p) => p.asset_id === assetId && !isRecipientAssignmentPlan(p));
+    await supabase.from('assets').update({ is_planned_transfer: hasActualPlan }).eq('id', assetId);
+    await load();
+  };
 
-  if (loading) return <div className="p-8 text-sm text-gray-400">로딩 중...</div>;
+  if (loading) return <KynLoader />;
 
   return (
-    <div className="p-8 max-w-5xl">
-      <div className="flex items-center justify-between mb-6">
+    <div className="main">
+      <div className="page-header">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">이전 계획</h1>
-          <p className="text-sm text-gray-500 mt-1">자산별 이전 전략 설계 및 세금 추정</p>
+          <div className="crumb">TRANSFER PLANNING</div>
+          <h1 className="page-title" style={{ marginTop: 10 }}>이전 계획</h1>
+          <p style={{ margin: '6px 0 0', fontSize: 13.5, color: 'var(--ink-faint)', lineHeight: 1.6 }}>
+            자산마다 받을 가족 구성원을 복수로 지정합니다. 구체적인 실행안은 전략 분석에서 최적화합니다.
+          </p>
         </div>
-        {mainTab === 'plans' && (
-          <button onClick={openNew} className="btn-primary">+ 계획 추가</button>
-        )}
       </div>
 
-      {/* 탭 */}
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-6 w-fit">
-        {([
-          ['plans', '이전 계획'],
-          ['distribute', '배분 설계'],
-        ] as [MainTab, string][]).map(([t, label]) => (
-          <button key={t} onClick={() => setMainTab(t)}
-            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-              mainTab === t ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-            }`}>
-            {label}
-          </button>
-        ))}
+      <div className="stepbar">
+        <div>
+          <b>1. 자산별 수증자 후보 지정</b>
+          <span>자산을 받을 실제 가족 구성원을 선택합니다. 복수 선택이 가능하며 이 화면에서는 자산과 수증자 후보만 연결합니다.</span>
+        </div>
+        <Link href="/dashboard/strategy" className="link" style={{ whiteSpace: 'nowrap' }}>
+          배정 완료 후 전략 분석으로 이동 →
+        </Link>
       </div>
 
-      {/* ── 탭 1: 이전 계획 CRUD ── */}
-      {mainTab === 'plans' && (
-        <>
-          {plans.length > 0 && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              {([
-                ['총 계획 수',     `${plans.length}건`,             'text-blue-700'],
-                ['예상 세금 합계', fmt(totalEstimatedTax),          'text-red-600'],
-                ['즉시/단기',      `${plans.filter(p => ['즉시','단기'].includes(p.priority)).length}건`, 'text-orange-600'],
-                ['이전 자산 수',   `${new Set(plans.map(p => p.asset_id).filter(Boolean)).size}개`, 'text-gray-700'],
-              ] as [string, string, string][]).map(([label, val, color]) => (
-                <div key={label} className="metric-card">
-                  <div className="text-xs text-gray-500 mb-1">{label}</div>
-                  <div className={`text-xl font-bold ${color}`}>{val}</div>
-                </div>
-              ))}
-            </div>
-          )}
+      <div ref={assignmentRef} className="segtabs">
+        <button type="button" className={'segtab' + (mainTab === 'summary' ? ' active' : '')} onClick={() => setMainTab('summary')}>배정 현황</button>
+        <button type="button" className={'segtab' + (mainTab === 'assign' ? ' active' : '')} onClick={() => setMainTab('assign')}>수증자 선택</button>
+      </div>
 
-          {plans.length === 0 ? (
-            <div className="card text-center py-16">
-              <div className="text-4xl mb-4">📋</div>
-              <p className="text-gray-500 text-sm mb-4">이전 계획을 추가해 세금을 미리 파악하세요</p>
-              <div className="flex gap-2 justify-center">
-                <button onClick={openNew} className="btn-primary">계획 직접 추가</button>
-                <button onClick={() => setMainTab('distribute')} className="btn-secondary">배분 설계 마법사</button>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {Object.entries(grouped).sort(([a], [b]) => +a - +b).map(([yr, items]) => (
-                <div key={yr}>
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-xs font-bold">
-                      {yr}
-                    </div>
-                    <div className="text-sm font-semibold text-gray-700">
-                      {yr === '0' ? '즉시' : `${yr}년 후`}
-                    </div>
-                    <div className="flex-1 h-px bg-gray-200" />
-                    <div className="text-xs text-gray-400">
-                      예상 세금 {fmt(items.reduce((s, p) => s + (p.estimated_tax || 0), 0))}
-                    </div>
-                  </div>
-                  <div className="space-y-2 ml-10">
-                    {items.map(pl => {
-                      const asset = pl.asset as Asset | undefined;
-                      const from  = pl.from_member as FamilyMember | undefined;
-                      const to    = pl.to_member as FamilyMember | undefined;
-                      return (
-                        <div key={pl.id} className="card hover:border-blue-200 transition-all">
-                          <div className="flex items-start justify-between">
-                            <div className="flex items-start gap-3">
-                              <div>
-                                <div className="flex items-center gap-2 mb-1">
-                                  <span className="text-sm font-semibold text-gray-900">
-                                    {asset?.name || '자산 미지정'}
-                                  </span>
-                                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${PRIORITY_COLORS[pl.priority] || 'bg-gray-100 text-gray-600'}`}>
-                                    {pl.priority}
-                                  </span>
-                                  <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">
-                                    {pl.transfer_type}
-                                  </span>
-                                </div>
-                                <div className="text-xs text-gray-500">
-                                  {from?.name || '?'} → {to?.name || '?'}
-                                  {pl.transfer_pct < 100 && ` · ${pl.transfer_pct}% 이전`}
-                                  {asset && ` · ${fmt(asset.current_value * pl.transfer_pct / 100)}`}
-                                </div>
-                                <div className="text-xs text-gray-400 mt-1">{TYPE_DESC[pl.transfer_type]}</div>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              {pl.estimated_tax != null && pl.estimated_tax > 0 && (
-                                <div className="text-right">
-                                  <div className="text-xs text-gray-400">예상 세금</div>
-                                  <div className="text-sm font-semibold text-red-600">{fmt(pl.estimated_tax)}</div>
-                                </div>
-                              )}
-                              <div className="flex gap-1.5">
-                                <button onClick={() => openEdit(pl)} className="text-xs text-blue-600 hover:underline">수정</button>
-                                <button onClick={() => del(pl.id)} className="text-xs text-red-400 hover:underline">삭제</button>
-                              </div>
-                            </div>
-                          </div>
-                          {pl.notes && (
-                            <div className="mt-2 text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-1.5">{pl.notes}</div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
-
-      {/* ── 탭 2: 배분 설계 마법사 ── */}
-      {mainTab === 'distribute' && (
-        <DistributeWizard
-          assets={assets}
-          members={members}
-          macro={macro}
-          onAddPlans={addStrategyActions}
+      {mainTab === 'summary' ? (
+        <SummaryView
+          assignedAssets={assignedAssets} assignmentsByAsset={assignmentsByAsset}
+          members={members} assignedValue={assignedValue}
+          assignedRecipientIds={assignedRecipientIds} multiRecipientAssetCount={multiRecipientAssetCount}
+          onEdit={() => setMainTab('assign')} onClear={clearAssetAssignment}
         />
+      ) : (
+        <AssetAssignmentDesigner assets={assets} members={members} plans={assignmentPlans} saving={saving} onSave={saveAssignments} />
       )}
 
-      {/* 계획 추가/수정 모달 */}
-      {open && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl">
-            <div className="p-5 border-b border-gray-100">
-              <h2 className="font-semibold text-gray-900">{editing ? '계획 수정' : '이전 계획 추가'}</h2>
-            </div>
-            <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
-              <div>
-                <label className="label">대상 자산</label>
-                <select className="select" value={form.asset_id} onChange={e => setForm({...form, asset_id: e.target.value})}>
-                  <option value="">자산 선택</option>
-                  {assets.map(a => <option key={a.id} value={a.id}>{a.name} ({fmt(a.current_value)})</option>)}
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="label">보내는 사람</label>
-                  <select className="select" value={form.from_member_id} onChange={e => setForm({...form, from_member_id: e.target.value})}>
-                    <option value="">선택</option>
-                    {members.map(m => <option key={m.id} value={m.id}>{m.name} ({m.relation})</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="label">받는 사람</label>
-                  <select className="select" value={form.to_member_id} onChange={e => setForm({...form, to_member_id: e.target.value})}>
-                    <option value="">선택</option>
-                    {members.map(m => <option key={m.id} value={m.id}>{m.name} ({m.relation})</option>)}
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="label">이전 방법</label>
-                <select className="select" value={form.transfer_type} onChange={e => setForm({...form, transfer_type: e.target.value as TransferType})}>
-                  {TRANSFER_TYPES.map(t => <option key={t}>{t}</option>)}
-                </select>
-                <p className="text-xs text-gray-400 mt-1">{TYPE_DESC[form.transfer_type]}</p>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="label">이전 비율 (%)</label>
-                  <input type="number" step="1" min="1" max="100" className="input" value={form.transfer_pct}
-                    onChange={e => setForm({...form, transfer_pct: +e.target.value})} />
-                </div>
-                <div>
-                  <label className="label">실행 시점 (몇 년 후)</label>
-                  <input type="number" step="1" min="0" className="input" value={form.year_offset}
-                    onChange={e => setForm({...form, year_offset: +e.target.value})} />
-                </div>
-              </div>
-              <div>
-                <label className="label">우선순위</label>
-                <select className="select" value={form.priority} onChange={e => setForm({...form, priority: e.target.value})}>
-                  {['즉시','단기','중기','장기'].map(p => <option key={p}>{p}</option>)}
-                </select>
-              </div>
+      <div className="stepbar" style={{ marginTop: 20 }}>
+        <span style={{ fontSize: 12.5, color: 'var(--ink-faint)', lineHeight: 1.7 }}>
+          <b style={{ color: 'var(--ink-soft)' }}>계산 기준</b>{'  '}
+          이 화면은 가족 구성원 후보만 지정합니다. 후보 배정만으로 증여세·취득세·상속세가 발생한 것으로 계산하지 않으며, 실제 실행안은 전략 분석에서 별도로 저장합니다.
+        </span>
+      </div>
+    </div>
+  );
+}
 
-              {form.asset_id && form.to_member_id && (
-                <div className="bg-red-50 border border-red-100 rounded-xl p-3">
-                  <div className="text-xs text-gray-500">예상 세금 (자동계산)</div>
-                  <div className="text-lg font-bold text-red-600">{fmt(estimateTax(form))}</div>
-                </div>
-              )}
-
-              <div>
-                <label className="label">메모</label>
-                <textarea className="input resize-none h-16" placeholder="특이사항"
-                  value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} />
-              </div>
-            </div>
-            <div className="p-5 border-t border-gray-100 flex gap-2 justify-end">
-              <button onClick={() => setOpen(false)} className="btn-secondary">취소</button>
-              <button onClick={save} disabled={saving} className="btn-primary">
-                {saving ? '저장 중...' : '저장'}
-              </button>
-            </div>
+function SummaryView({
+  assignedAssets, assignmentsByAsset, members, assignedValue,
+  assignedRecipientIds, multiRecipientAssetCount, onEdit, onClear,
+}: {
+  assignedAssets: Asset[];
+  assignmentsByAsset: Map<string, TransferPlan[]>;
+  members: FamilyMember[];
+  assignedValue: number;
+  assignedRecipientIds: Set<string>;
+  multiRecipientAssetCount: number;
+  onEdit: () => void;
+  onClear: (assetId: string) => Promise<void>;
+}) {
+  return (
+    <div className="card-kyn">
+      <div className="card-head">
+        <div>
+          <div className="crumb" style={{ marginBottom: 8 }}>RECIPIENT ASSIGNMENT</div>
+          <div className="t">자산별 수증자 후보
+            <span className="sub">이 배정은 최종 증여 지시가 아닙니다. 전략 분석이 세금, 취득비용과 현금흐름을 비교해 실행안을 계산합니다.</span>
           </div>
+        </div>
+        <button type="button" onClick={onEdit}
+          style={{ border: '1px solid var(--line-strong)', background: 'var(--bg)', color: 'var(--ink)', padding: '10px 18px', cursor: 'pointer', fontWeight: 600, fontSize: 13, fontFamily: 'var(--sans)' }}>
+          배정 수정
+        </button>
+      </div>
+      <div className="mini">
+        <div><div className="l">배정 자산</div><div className="n">{assignedAssets.length}건</div></div>
+        <div><div className="l">배정 자산가치</div><div className="n">{fmt(assignedValue)}</div></div>
+        <div><div className="l">후보 구성원</div><div className="n">{assignedRecipientIds.size}명</div></div>
+        <div><div className="l">복수 후보 자산</div><div className="n">{multiRecipientAssetCount}건</div></div>
+      </div>
+      {assignedAssets.length === 0 ? (
+        <div style={{ padding: '56px 24px', textAlign: 'center', color: 'var(--ink-faint)', fontSize: 13.5 }}>
+          아직 지정된 수증자 후보가 없습니다.
+        </div>
+      ) : (
+        <div className="planlist">
+          {assignedAssets.map((asset) => {
+            const assetPlans = assignmentsByAsset.get(asset.id) ?? [];
+            const owner = members.find((m) => m.id === asset.owner_member_id);
+            return (
+              <div key={asset.id} className="prow">
+                <div style={{ minWidth: 180 }}>
+                  <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--ink)' }}>{asset.name}</div>
+                  <div style={{ fontSize: 12, color: 'var(--ink-faint)', marginTop: 3 }}>
+                    {owner?.name ?? '소유자 미지정'} · 현재가치 {fmt(asset.current_value)}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', flex: 1, paddingLeft: 16 }}>
+                  <span style={{ fontSize: 12, color: 'var(--ink-faint)' }}>받을 후보</span>
+                  {assetPlans.map((plan) => {
+                    const recipient = members.find((m) => m.id === plan.to_member_id);
+                    return (
+                      <span key={plan.id} className="pill gold" style={{ fontSize: 12 }}>
+                        {recipient?.name ?? '미지정'}{recipient?.relation ? ` (${recipient.relation})` : ''}
+                      </span>
+                    );
+                  })}
+                </div>
+                <button type="button" onClick={() => void onClear(asset.id)}
+                  style={{ border: '1px solid var(--line)', background: 'var(--bg)', padding: '7px 12px', cursor: 'pointer', color: 'var(--ink-faint)', fontSize: 12.5, fontFamily: 'var(--sans)' }}>
+                  해제
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
 
-// ── 배분 설계 마법사 ──────────────────────────────────────────
-function DistributeWizard({
-  assets,
-  members,
-  macro,
-  onAddPlans,
+function AssetAssignmentDesigner({
+  assets, members, plans, saving, onSave,
 }: {
   assets: Asset[];
   members: FamilyMember[];
-  macro: MacroSettings | null;
-  onAddPlans: (actions: StrategyAction[]) => Promise<void>;
+  plans: TransferPlan[];
+  saving: boolean;
+  onSave: (actions: AssetAssignmentAction[]) => Promise<void>;
 }) {
-  const [step, setStep] = useState<WizardStep>(1);
-  const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
-  const [selectedRecipientIds, setSelectedRecipientIds] = useState<Set<string>>(new Set());
-  const [strategies, setStrategies] = useState<FamilyDistributionStrategy[]>([]);
-  const [addingId, setAddingId] = useState<string | null>(null);
-
-  // 본인 제외 수증 가능 멤버
-  const recipientMembers = members.filter(m => m.relation !== '본인');
-  const selectedAssets = assets.filter(a => selectedAssetIds.has(a.id));
-  const selectedRecipients = recipientMembers.filter(m => selectedRecipientIds.has(m.id));
-
-  function toggleAsset(id: string) {
-    setSelectedAssetIds(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
+  const initialSelections = useMemo(() => {
+    const next: Record<string, string[]> = {};
+    assets.forEach((a) => {
+      next[a.id] = plans.filter((p) => p.asset_id === a.id && p.to_member_id).map((p) => p.to_member_id as string);
     });
-  }
-  function toggleRecipient(id: string) {
-    setSelectedRecipientIds(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
+    return next;
+  }, [assets, plans]);
+
+  const [selections, setSelections] = useState<Record<string, string[]>>(initialSelections);
+  useEffect(() => { setSelections(initialSelections); }, [initialSelections]);
+
+  const toggleRecipient = (assetId: string, recipientId: string, checked: boolean) => {
+    setSelections((cur) => {
+      const sel = cur[assetId] ?? [];
+      const next = checked ? Array.from(new Set([...sel, recipientId])) : sel.filter((id) => id !== recipientId);
+      return { ...cur, [assetId]: next };
     });
-  }
+  };
 
-  function goStep2() {
-    if (selectedAssetIds.size === 0) return;
-    setStep(2);
-  }
+  const selectedAssetCount = assets.filter((a) => (selections[a.id]?.length ?? 0) > 0).length;
+  const selectedLinkCount = assets.reduce((s, a) => s + (selections[a.id]?.length ?? 0), 0);
+  const save = async () => onSave(assets.map((a) => ({ assetId: a.id, recipientIds: selections[a.id] ?? [] })));
 
-  function generateStrategies() {
-    if (selectedRecipientIds.size === 0) return;
-    const result = generateDistributionStrategies(
-      selectedAssets,
-      selectedRecipients,
-      macro,
-      members,
+  if (assets.length === 0) {
+    return (
+      <div className="card-kyn" style={{ padding: '56px 24px', textAlign: 'center', color: 'var(--ink-faint)', fontSize: 13.5 }}>
+        먼저 자산 목록에 자산을 등록하세요.
+      </div>
     );
-    setStrategies(result);
-    setStep(3);
-  }
-
-  async function handleAddStrategy(strategy: FamilyDistributionStrategy) {
-    setAddingId(strategy.id);
-    await onAddPlans(strategy.actions);
-    setAddingId(null);
-  }
-
-  // 자산 시세차익률
-  function gainPct(asset: Asset): number {
-    if (asset.acquisition_cost <= 0) return 0;
-    return ((asset.current_value - asset.acquisition_cost) / asset.acquisition_cost) * 100;
   }
 
   return (
-    <div className="space-y-6">
-      {/* 스텝 인디케이터 */}
-      <div className="flex items-center gap-2">
-        {([
-          [1, '자산 선택'],
-          [2, '수증자 선택'],
-          [3, '전략 비교'],
-        ] as [WizardStep, string][]).map(([s, label], idx) => (
-          <div key={s} className="flex items-center gap-2">
-            {idx > 0 && <div className="w-8 h-px bg-gray-300" />}
-            <div className={`flex items-center gap-2 ${step === s ? 'text-blue-700' : step > s ? 'text-green-600' : 'text-gray-400'}`}>
-              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border-2 ${
-                step === s ? 'border-blue-600 bg-blue-600 text-white'
-                : step > s ? 'border-green-500 bg-green-500 text-white'
-                : 'border-gray-300 text-gray-400'
-              }`}>
-                {step > s ? '✓' : s}
-              </div>
-              <span className="text-sm font-medium">{label}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* ── Step 1: 자산 선택 ── */}
-      {step === 1 && (
-        <div>
-          <h2 className="text-lg font-semibold text-gray-900 mb-1">이전할 자산을 선택하세요</h2>
-          <p className="text-sm text-gray-500 mb-4">여러 자산을 동시에 선택할 수 있습니다.</p>
-
-          {assets.length === 0 ? (
-            <div className="card text-center py-10 text-gray-400 text-sm">
-              등록된 자산이 없습니다. 자산을 먼저 등록해 주세요.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {assets.map(asset => {
-                const gp = gainPct(asset);
-                const isSelected = selectedAssetIds.has(asset.id);
-                return (
-                  <button
-                    key={asset.id}
-                    onClick={() => toggleAsset(asset.id)}
-                    className={`w-full text-left rounded-xl border-2 p-4 transition-all ${
-                      isSelected ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white hover:border-blue-200'
-                    }`}>
-                    <div className="flex items-center gap-3">
-                      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
-                        isSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-300'
-                      }`}>
-                        {isSelected && <span className="text-white text-xs font-bold">✓</span>}
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <span className="text-sm font-semibold text-gray-900">{asset.name}</span>
-                          <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">{asset.asset_type}</span>
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          현재가 <span className="font-medium text-gray-800">{fmt(asset.current_value)}</span>
-                          {' · '}
-                          취득가 <span className="font-medium">{fmt(asset.acquisition_cost)}</span>
-                          {' · '}
-                          시세차익
-                          <span className={`font-medium ml-1 ${gp >= 0 ? 'text-red-600' : 'text-blue-600'}`}>
-                            {gp >= 0 ? '+' : ''}{gp.toFixed(1)}%
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          <div className="flex justify-between items-center mt-6">
-            <span className="text-sm text-gray-500">{selectedAssetIds.size}개 선택됨</span>
-            <button
-              onClick={goStep2}
-              disabled={selectedAssetIds.size === 0}
-              className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed">
-              다음 →
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Step 2: 수증자 선택 ── */}
-      {step === 2 && (
-        <div>
-          <h2 className="text-lg font-semibold text-gray-900 mb-1">수증자(받는 사람)를 선택하세요</h2>
-          <p className="text-sm text-gray-500 mb-4">가족 중 자산을 받을 분들을 모두 선택해 주세요.</p>
-
-          {recipientMembers.length === 0 ? (
-            <div className="card text-center py-10 text-gray-400 text-sm">
-              가족 구성원을 먼저 등록해 주세요.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {recipientMembers.map(member => {
-                const isSelected = selectedRecipientIds.has(member.id);
-                const dedDisplay = DEDUCTION_DISPLAY[member.relation] ?? '1천만/10년';
-                return (
-                  <button
-                    key={member.id}
-                    onClick={() => toggleRecipient(member.id)}
-                    className={`w-full text-left rounded-xl border-2 p-4 transition-all ${
-                      isSelected ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white hover:border-blue-200'
-                    }`}>
-                    <div className="flex items-center gap-3">
-                      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
-                        isSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-300'
-                      }`}>
-                        {isSelected && <span className="text-white text-xs font-bold">✓</span>}
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <span className="text-sm font-semibold text-gray-900">{member.name}</span>
-                          <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded">{member.relation}</span>
-                          <span className="text-xs text-gray-400">{member.age}세</span>
-                          {member.relation === '손자녀' && (
-                            <span className="text-xs bg-orange-50 text-orange-600 px-2 py-0.5 rounded">세대생략 30% 할증</span>
-                          )}
-                        </div>
-                        <div className="text-xs text-gray-400">
-                          10년 증여공제 한도: <span className="font-medium text-gray-600">{dedDisplay}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          <div className="flex justify-between items-center mt-6">
-            <button onClick={() => setStep(1)} className="btn-secondary">← 이전</button>
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-gray-500">{selectedRecipientIds.size}명 선택됨</span>
-              <button
-                onClick={generateStrategies}
-                disabled={selectedRecipientIds.size === 0}
-                className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed">
-                전략 생성
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Step 3: 전략 비교 ── */}
-      {step === 3 && (
-        <div>
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">4가지 배분 전략 비교</h2>
-              <p className="text-sm text-gray-500">
-                자산 {selectedAssets.length}개 · 수증자 {selectedRecipients.length}명 기준
-              </p>
-            </div>
-            <button onClick={() => setStep(2)} className="btn-secondary text-sm">← 수정</button>
-          </div>
-
-          <div className="space-y-6">
-            {strategies.map(strategy => (
-              <StrategyCard
-                key={strategy.id}
-                strategy={strategy}
-                isAdding={addingId === strategy.id}
-                onAdd={() => handleAddStrategy(strategy)}
-              />
-            ))}
-          </div>
-
-          <div className="mt-6 text-xs text-gray-400 text-center">
-            * 세금 계산은 단순화된 추정치입니다. 실제 집행 전 세무사 확인이 필요합니다.
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── 전략 카드 컴포넌트 ────────────────────────────────────────
-function StrategyCard({
-  strategy,
-  isAdding,
-  onAdd,
-}: {
-  strategy: FamilyDistributionStrategy;
-  isAdding: boolean;
-  onAdd: () => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const hasCarryOverWarning = strategy.actions.some(a => a.carryOverWarning);
-
-  return (
-    <div className={`rounded-2xl border-2 overflow-hidden ${
-      strategy.isRecommended ? 'border-blue-400' : 'border-gray-200'
-    }`}>
-      {/* 헤더 */}
-      <div className={`px-5 py-4 ${strategy.isRecommended ? 'bg-blue-50' : 'bg-gray-50'}`}>
-        <div className="flex items-start justify-between gap-3">
+    <div>
+      <div className="card-kyn">
+        <div className="card-head">
           <div>
-            <div className="flex items-center gap-2 mb-1">
-              <h3 className="text-base font-bold text-gray-900">{strategy.label}</h3>
-              {strategy.isRecommended && (
-                <span className="text-xs bg-blue-600 text-white px-2 py-0.5 rounded-full font-medium">추천</span>
-              )}
+            <div className="crumb" style={{ marginBottom: 8 }}>ASSET RECIPIENTS</div>
+            <div className="t">자산을 받을 가족 구성원을 선택하세요
+              <span className="sub">자산별로 한 명 이상을 복수 선택할 수 있습니다. 선택 순서와 무관하며 이 화면은 자산별 수증자 후보만 저장합니다.</span>
             </div>
-            <p className="text-sm text-gray-500">{strategy.tagline}</p>
           </div>
-          <button
-            onClick={() => setExpanded(e => !e)}
-            className="text-xs text-blue-600 border border-blue-200 rounded-lg px-3 py-1.5 hover:bg-blue-50 flex-shrink-0">
-            {expanded ? '접기' : '상세보기'}
-          </button>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', border: '1px solid var(--line)', minWidth: 200 }}>
+            <div style={{ padding: '14px 18px', borderRight: '1px solid var(--line)' }}>
+              <div style={{ fontSize: 11.5, color: 'var(--ink-faint)', marginBottom: 5 }}>배정 자산</div>
+              <div style={{ fontSize: 22, fontWeight: 600, fontFamily: 'var(--serif)', letterSpacing: '-0.02em' }}>{selectedAssetCount}건</div>
+            </div>
+            <div style={{ padding: '14px 18px' }}>
+              <div style={{ fontSize: 11.5, color: 'var(--ink-faint)', marginBottom: 5 }}>후보 연결</div>
+              <div style={{ fontSize: 22, fontWeight: 600, fontFamily: 'var(--serif)', letterSpacing: '-0.02em' }}>{selectedLinkCount}건</div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="px-5 py-4 bg-white">
-        {/* 핵심 지표 */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-          <div className="bg-gray-50 rounded-xl p-3">
-            <div className="text-xs text-gray-500 mb-0.5">증여세 합계</div>
-            <div className="text-base font-bold text-red-600">
-              {strategy.totalGiftTax > 0 ? fmt(strategy.totalGiftTax) : '없음'}
-            </div>
-          </div>
-          <div className="bg-gray-50 rounded-xl p-3">
-            <div className="text-xs text-gray-500 mb-0.5">5년 보유 후 실수령</div>
-            <div className="text-base font-bold text-green-600">{fmt(strategy.netToFamilyGiftHold)}</div>
-          </div>
-          <div className="bg-gray-50 rounded-xl p-3">
-            <div className="text-xs text-gray-500 mb-0.5">즉시 매각 총 세금</div>
-            <div className="text-base font-bold text-orange-600">{fmt(strategy.cgtSellImmediately)}</div>
-          </div>
-          <div className="bg-gray-50 rounded-xl p-3">
-            <div className="text-xs text-gray-500 mb-0.5">상속 유지 시 (10년 후)</div>
-            <div className="text-base font-bold text-gray-600">{fmt(strategy.inheritanceAlt)}</div>
-          </div>
-        </div>
-
-        {/* 이월과세 경고 */}
-        {hasCarryOverWarning && strategy.actions.length > 0 && (
-          <div className="bg-red-50 border border-red-200 rounded-xl p-3 mb-4">
-            <div className="text-sm font-semibold text-red-700 mb-2">이월과세 주의 (소득세법 §97의2)</div>
-            {strategy.actions.filter(a => a.carryOverWarning).map((a, idx) => (
-              <div key={idx} className="text-xs text-red-600 mb-1">
-                <span className="font-medium">{a.assetName}</span>({a.recipientName})
-                {' — '}5년 내 매각 시 원취득가({fmt(a.originalCost)}) 기준 양도세{' '}
-                <span className="font-bold">{fmt(a.cgtIfImmediateSale)}</span> 발생.
-                5년 이상 보유 시 <span className="font-bold">{fmt(a.cgtIf5yrHoldSale)}</span>으로 절감.
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
+        {assets.map((asset) => {
+          const owner = members.find((m) => m.id === asset.owner_member_id);
+          const candidates = members.filter((m) => m.id !== asset.owner_member_id);
+          const selected = selections[asset.id] ?? [];
+          return (
+            <article key={asset.id} style={{ border: '1px solid var(--line)', background: 'var(--bg)', display: 'grid', gridTemplateColumns: '260px 1fr' }}>
+              <div style={{ padding: '20px 22px', borderRight: '1px solid var(--line)', background: 'var(--paper)' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+                  <div style={{ fontWeight: 600, fontSize: 15.5, color: 'var(--ink)' }}>{asset.name}</div>
+                  <span style={{ border: '1px solid var(--line)', color: 'var(--ink-faint)', padding: '3px 6px', fontSize: 10.5, whiteSpace: 'nowrap' }}>{asset.asset_type}</span>
+                </div>
+                <div style={{ marginTop: 7, color: 'var(--ink-faint)', fontSize: 12.5, lineHeight: 1.7 }}>
+                  {owner?.name ?? '소유자 미지정'} 보유<br />현재가치 {fmt(asset.current_value)}
+                </div>
+                <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)', fontSize: 12, fontWeight: 600, color: selected.length > 0 ? 'var(--gold-deep)' : 'var(--red)' }}>
+                  {selected.length > 0 ? `${selected.length}명 후보 선택` : '수증자 후보를 선택하세요'}
+                </div>
               </div>
-            ))}
-          </div>
-        )}
+              <div style={{ padding: '20px 22px' }}>
+                <div style={{ fontSize: 11.5, color: 'var(--ink-faint)', letterSpacing: '0.08em', marginBottom: 13 }}>받을 가족 구성원 · 복수 선택 가능</div>
+                {candidates.length === 0 ? (
+                  <div style={{ color: 'var(--ink-faint)', fontSize: 13 }}>선택 가능한 가족 구성원이 없습니다.</div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(155px, 1fr))', gap: 8 }}>
+                    {candidates.map((member) => {
+                      const checked = selected.includes(member.id);
+                      return (
+                        <label key={member.id}
+                          style={{ border: `1px solid ${checked ? 'var(--gold)' : 'var(--line)'}`, background: checked ? 'var(--gold-tint)' : 'var(--bg)', padding: '11px 13px', display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={checked}
+                            onChange={(e) => toggleRecipient(asset.id, member.id, e.target.checked)}
+                            style={{ accentColor: 'var(--gold-deep)', width: 14, height: 14, flexShrink: 0 }} />
+                          <span>
+                            <b style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink)' }}>{member.name}</b>
+                            <span style={{ color: 'var(--ink-faint)', marginLeft: 5, fontSize: 12 }}>{member.relation}</span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </article>
+          );
+        })}
+      </div>
 
-        {/* 배분 액션 테이블 */}
-        {strategy.actions.length > 0 && (
-          <div className="mb-4">
-            <div className="text-xs font-semibold text-gray-500 mb-2">배분 내역</div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-gray-100">
-                    <th className="text-left py-2 pr-3 text-gray-500 font-medium">자산명</th>
-                    <th className="text-left py-2 pr-3 text-gray-500 font-medium">수증자</th>
-                    <th className="text-right py-2 pr-3 text-gray-500 font-medium">이전가치</th>
-                    <th className="text-right py-2 pr-3 text-gray-500 font-medium">비율</th>
-                    <th className="text-right py-2 pr-3 text-gray-500 font-medium">시점</th>
-                    <th className="text-right py-2 pr-3 text-gray-500 font-medium">증여세</th>
-                    <th className="text-center py-2 text-gray-500 font-medium">이월과세</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {strategy.actions.map((action, idx) => (
-                    <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50">
-                      <td className="py-2 pr-3 font-medium text-gray-800">{action.assetName}</td>
-                      <td className="py-2 pr-3 text-gray-600">
-                        {action.recipientName}
-                        <span className="text-gray-400 ml-1">({action.recipientRelation})</span>
-                      </td>
-                      <td className="py-2 pr-3 text-right text-gray-800">{fmt(action.giftValue)}</td>
-                      <td className="py-2 pr-3 text-right text-gray-600">{action.transferPct.toFixed(1)}%</td>
-                      <td className="py-2 pr-3 text-right text-gray-600">
-                        {action.yearOffset === 0 ? '즉시' : `${action.yearOffset}년 후`}
-                      </td>
-                      <td className="py-2 pr-3 text-right font-medium text-red-600">
-                        {action.giftTax > 0 ? fmt(action.giftTax) : '없음'}
-                      </td>
-                      <td className="py-2 text-center">
-                        {action.carryOverWarning
-                          ? <span className="text-red-500 font-bold">⚠</span>
-                          : <span className="text-green-500">✓</span>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* 장단점 */}
-        {expanded && (
-          <div className="space-y-3 mb-4">
-            <div>
-              <div className="text-xs font-semibold text-green-700 mb-1">장점</div>
-              <ul className="space-y-1">
-                {strategy.pros.map((p, i) => (
-                  <li key={i} className="text-xs text-gray-600 flex items-start gap-1.5">
-                    <span className="text-green-500 flex-shrink-0 mt-0.5">+</span>{p}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <div className="text-xs font-semibold text-red-700 mb-1">주의사항</div>
-              <ul className="space-y-1">
-                {strategy.cons.map((c, i) => (
-                  <li key={i} className="text-xs text-gray-600 flex items-start gap-1.5">
-                    <span className="text-red-400 flex-shrink-0 mt-0.5">-</span>{c}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <div className="text-xs font-semibold text-blue-700 mb-1">적용 법규</div>
-              <ul className="space-y-1">
-                {strategy.keyRules.map((r, i) => (
-                  <li key={i} className="text-xs text-gray-500 flex items-start gap-1.5">
-                    <span className="text-blue-400 flex-shrink-0 mt-0.5">§</span>{r}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        )}
-
-        {/* 전략 추가 버튼 */}
-        {strategy.actions.length > 0 && (
-          <button
-            onClick={onAdd}
-            disabled={isAdding}
-            className="w-full btn-primary disabled:opacity-50 disabled:cursor-not-allowed">
-            {isAdding ? '저장 중...' : '이 전략으로 계획 추가'}
-          </button>
-        )}
-        {strategy.actions.length === 0 && (
-          <div className="text-center text-sm text-gray-400 py-2">
-            이 전략은 증여 없이 상속 유지 — 별도 계획이 생성되지 않습니다.
-          </div>
-        )}
+      <div style={{ border: '1px solid var(--line)', borderTop: 0, background: 'var(--paper)', padding: '16px 22px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 20 }}>
+        <div style={{ color: 'var(--ink-faint)', fontSize: 12.5 }}>후보 미지정 자산은 전략 분석에서 이전 대상으로 사용하지 않습니다.</div>
+        <button type="button" onClick={() => void save()} disabled={saving}
+          style={{ border: '1px solid var(--ink)', background: 'var(--ink)', color: '#F4F2EC', padding: '12px 24px', cursor: saving ? 'wait' : 'pointer', opacity: saving ? 0.65 : 1, fontWeight: 600, fontSize: 13.5, fontFamily: 'var(--sans)' }}>
+          {saving ? '저장 중...' : '수증자 후보 저장'}
+        </button>
       </div>
     </div>
   );

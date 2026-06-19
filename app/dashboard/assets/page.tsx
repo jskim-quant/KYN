@@ -1,14 +1,11 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase';
-import { Asset, AssetType, FamilyMember } from '@/types';
-import { calcCapitalGainsTax, calcAcquisitionTax } from '@/lib/tax';
+import { Asset, AssetType, FamilyMember, MacroSettings } from '@/types';
+import { getAssetGrowthRate, projectAssetValue } from '@/lib/tax';
+import { KynLoader } from '@/app/dashboard/components/KynLoader';
 
-const ASSET_TYPES: AssetType[] = ['주거용부동산','상업용부동산','토지','금융자산','비상장주식','예금채권','기타'];
-const TYPE_ICONS: Record<string, string> = {
-  '주거용부동산':'🏠','상업용부동산':'🏢','토지':'🌾',
-  '금융자산':'📈','비상장주식':'📋','예금채권':'💰','기타':'📦'
-};
+const ASSET_TYPES: AssetType[] = ['주거용부동산','상업용부동산','토지','농지','임야','오피스텔','예금','채권','국내주식','해외주식','비상장주식','보험','금융자산','예금채권','기타'];
 
 const EMPTY = {
   name:'', asset_type:'주거용부동산' as AssetType, owner_member_id:'',
@@ -26,13 +23,13 @@ function fmt(n: number, d=1) {
 export default function AssetsPage() {
   const [assets, setAssets]   = useState<Asset[]>([]);
   const [members, setMembers] = useState<FamilyMember[]>([]);
+  const [macro, setMacro]     = useState<MacroSettings | null>(null);
   const [form, setForm]       = useState({ ...EMPTY });
   const [editing, setEditing] = useState<string | null>(null);
   const [open, setOpen]       = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
   const [familyId, setFamilyId] = useState<string | null>(null);
-  const [filter, setFilter]   = useState<string>('전체');
   const supabase = createClient();
 
   useEffect(() => { load(); }, []);
@@ -41,12 +38,14 @@ export default function AssetsPage() {
     const { data: p } = await supabase.from('profiles').select('family_id').single();
     if (!p?.family_id) { setLoading(false); return; }
     setFamilyId(p.family_id);
-    const [{ data: a }, { data: m }] = await Promise.all([
+    const [{ data: a }, { data: m }, { data: ms }] = await Promise.all([
       supabase.from('assets').select('*').eq('family_id', p.family_id).order('current_value', { ascending: false }),
       supabase.from('family_members').select('*').eq('family_id', p.family_id),
+      supabase.from('macro_settings').select('*').eq('family_id', p.family_id).single(),
     ]);
     setAssets(a || []);
     setMembers(m || []);
+    setMacro(ms || null);
     setLoading(false);
   }
 
@@ -83,146 +82,163 @@ export default function AssetsPage() {
     setAssets(a => a.filter(x => x.id !== id));
   }
 
-  const filtered = filter === '전체' ? assets : assets.filter(a => a.asset_type === filter);
   const totalValue = assets.reduce((s, a) => s + a.current_value, 0);
   const totalDebt  = assets.reduce((s, a) => s + a.loan_amount, 0);
-  const totalIncome = assets.reduce((s, a) => s + a.current_value * a.annual_yield_pct / 100, 0);
+  const totalTax = assets.reduce((s, a) => s + a.annual_tax, 0);
+  const totalFutureValue = assets.reduce((s, a) => s + projectAssetValue(a, 10, macro), 0);
+  const totalYield = assets.reduce((s, a) => s + a.current_value * a.annual_yield_pct / 100, 0);
 
   const ownerName = (id: string | null) =>
     members.find(m => m.id === id)?.name || '미지정';
 
-  if (loading) return <div className="p-8 text-sm text-gray-400">로딩 중...</div>;
+  if (loading) return <KynLoader />;
 
   return (
-    <div className="p-8 max-w-5xl">
-      <div className="flex items-center justify-between mb-6">
+    <div className="main">
+      <div className="crumb">ASSETS</div>
+      <div className="pagehead">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">자산 목록</h1>
-          <p className="text-sm text-gray-500 mt-1">취득가·취득일 기반 정확한 세금 계산</p>
+          <h1>자산 목록</h1>
+          <div className="desc">전체 {assets.length}건 · 평가 기준 {new Date().getFullYear()}</div>
         </div>
-        <button onClick={openNew} className="btn-primary">+ 자산 추가</button>
+        <button onClick={openNew} className="btn btn-ghost" style={{ padding: '14px 22px', fontSize: 14 }}>
+          자산 추가 <span className="arrow">+</span>
+        </button>
+      </div>
+      <div className="rule" />
+
+      {/* KPI strip */}
+      <div className="kpis">
+        <div className="kpi">
+          <div className="label">총 평가액</div>
+          <div className="v ink num">{fmt(totalValue)}<span className="u">억</span></div>
+          <div className="foot">10년 후 {fmt(totalFutureValue)}억</div>
+        </div>
+        <div className="kpi">
+          <div className="label">연 임대수익</div>
+          <div className={`v num ${totalYield > 0 ? 'pos' : 'ink'}`}>{fmt(totalYield)}<span className="u">억</span></div>
+          <div className="foot">등록 자산 기준</div>
+        </div>
+        <div className="kpi">
+          <div className="label">연 보유세</div>
+          <div className="v ink num">{fmt(totalTax)}<span className="u">억</span></div>
+          <div className="foot">현 구조 기준</div>
+        </div>
+        <div className="kpi">
+          <div className="label">담보 부채</div>
+          <div className={`v num ${totalDebt > 0 ? 'neg' : 'ink'}`}>{fmt(totalDebt)}<span className="u">억</span></div>
+          <div className="foot">LTV {totalValue > 0 ? (totalDebt/totalValue*100).toFixed(1) : '0.0'}% · {totalDebt === 0 ? '무차입' : '차입 있음'}</div>
+        </div>
       </div>
 
-      {/* 요약 */}
-      {assets.length > 0 && (
-        <div className="grid grid-cols-3 gap-4 mb-6">
-          {[
-            ['총 자산가치', `${fmt(totalValue)}억`, '파란색'],
-            ['총 대출잔액', `${fmt(totalDebt)}억`, '빨간색'],
-            ['연 임대수익', `${fmt(totalIncome)}억`, '초록색'],
-          ].map(([label, val, color]) => (
-            <div key={label} className="metric-card">
-              <div className="text-xs text-gray-500 mb-1">{label}</div>
-              <div className={`text-xl font-bold ${
-                color === '파란색' ? 'text-blue-700' :
-                color === '빨간색' ? 'text-red-600' : 'text-green-700'
-              }`}>{val}</div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* 필터 */}
-      {assets.length > 0 && (
-        <div className="flex gap-2 mb-4 flex-wrap">
-          {['전체', ...ASSET_TYPES].map(t => (
-            <button key={t} onClick={() => setFilter(t)}
-              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                filter === t ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}>{t}</button>
-          ))}
-        </div>
-      )}
-
-      {/* 목록 */}
-      {filtered.length === 0 ? (
-        <div className="card text-center py-16">
-          <div className="text-4xl mb-4">🏠</div>
-          <p className="text-gray-500 text-sm mb-4">자산을 추가해주세요</p>
-          <button onClick={openNew} className="btn-primary">첫 번째 자산 추가</button>
+      {assets.length === 0 ? (
+        <div className="block card" style={{ textAlign: 'center', padding: '64px 40px' }}>
+          <div className="serif" style={{ fontSize: 28, color: 'var(--gold-deep)', marginBottom: 16 }}>KYN</div>
+          <p style={{ color: 'var(--ink-faint)', fontSize: 13, marginBottom: 20 }}>자산을 추가해주세요</p>
+          <button onClick={openNew} className="btn btn-primary">자산 추가 <span className="arrow">+</span></button>
         </div>
       ) : (
-        <div className="space-y-3">
-          {filtered.map(a => {
-            const gain = a.current_value - a.acquisition_cost;
-            const cgt  = calcCapitalGainsTax(a);
-            const ltv  = a.current_value > 0 ? (a.loan_amount / a.current_value * 100) : 0;
-            return (
-              <div key={a.id} className="card hover:border-blue-200 transition-all">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="text-2xl">{TYPE_ICONS[a.asset_type]}</div>
-                    <div>
-                      <div className="font-semibold text-gray-900 text-sm">{a.name}</div>
-                      <div className="text-xs text-gray-400 mt-0.5">
-                        {a.asset_type} · 소유자: {ownerName(a.owner_member_id)}
-                        {a.acquisition_date && ` · 취득 ${a.acquisition_date.slice(0,7)}`}
-                      </div>
-                    </div>
+        <>
+          {/* 자산 구성 card */}
+          <div className="block card">
+            <div className="card-head">
+              <span className="t">자산 구성<span className="sub">평가액 {fmt(totalValue)}억 기준 · 전체 {new Set(assets.map(a => a.asset_type)).size > 1 ? `혼합 (${new Set(assets.map(a => a.asset_type)).size}종)` : (assets[0]?.asset_type || '') + ` (100%)`}</span></span>
+              <span className="link" style={{ color: 'var(--ink-faint)', cursor: 'default' }}>유형 {new Set(assets.map(a => a.asset_type)).size}종</span>
+            </div>
+            {assets.map(a => {
+              const pct = totalValue > 0 ? a.current_value / totalValue * 100 : 0;
+              const ownerAssigned = !!a.owner_member_id;
+              return (
+                <div key={a.id} className="comp">
+                  <div>
+                    <div className="nm">{a.name} <small>{a.asset_type} · {ownerName(a.owner_member_id)}</small></div>
+                    <div className="barwrap"><div className="bar"><span className={ownerAssigned ? 'brass' : 'clay'} style={{ width: `${pct}%` }} /></div></div>
                   </div>
-                  <div className="flex gap-2 items-center">
-                    {a.is_planned_transfer && (
-                      <span className="badge-blue">이전예정</span>
-                    )}
-                    <button onClick={() => openEdit(a)} className="text-xs text-blue-600 hover:underline">수정</button>
-                    <button onClick={() => del(a.id)} className="text-xs text-red-400 hover:underline">삭제</button>
-                  </div>
+                  <div className="amt num">{fmt(a.current_value)}억</div>
+                  <div className="pct num">{pct.toFixed(1)}%</div>
                 </div>
+              );
+            })}
+          </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-xs">
-                  <div className="bg-gray-50 rounded-lg p-2">
-                    <div className="text-gray-400 mb-0.5">현재가</div>
-                    <div className="font-semibold text-blue-700">{fmt(a.current_value)}억</div>
-                  </div>
-                  <div className="bg-gray-50 rounded-lg p-2">
-                    <div className="text-gray-400 mb-0.5">취득가 대비 차익</div>
-                    <div className={`font-semibold ${gain >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                      {gain >= 0 ? '+':''}{fmt(gain)}억
-                    </div>
-                  </div>
-                  <div className="bg-gray-50 rounded-lg p-2">
-                    <div className="text-gray-400 mb-0.5">LTV</div>
-                    <div className={`font-semibold ${ltv > 60 ? 'text-red-600' : ltv > 40 ? 'text-amber-600' : 'text-gray-700'}`}>
-                      {ltv.toFixed(1)}%
-                    </div>
-                  </div>
-                  <div className="bg-gray-50 rounded-lg p-2">
-                    <div className="text-gray-400 mb-0.5">양도세 추정</div>
-                    <div className="font-semibold text-amber-700">{fmt(cgt)}억</div>
-                  </div>
-                </div>
+          {/* 자산 상세 table card */}
+          <div className="block card">
+            <div className="card-head">
+              <span className="t">자산 상세</span>
+              <span className="link" style={{ color: 'var(--ink-faint)', cursor: 'default' }}>
+                10년 성장률 가정 {assets[0] ? (getAssetGrowthRate(assets[0], macro) * 100).toFixed(0) : 4}%/년
+              </span>
+            </div>
+            <table className="table kt asset-table">
+              <thead>
+                <tr>
+                  <th>자산명</th>
+                  <th>소유자</th>
+                  <th className="r">현재가</th>
+                  <th className="r">10년 후</th>
+                  <th className="r">연수익</th>
+                  <th className="r">보유세</th>
+                  <th className="r"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {assets.map(a => (
+                  <tr key={a.id}>
+                    <td className="name">{a.name}</td>
+                    <td className={a.owner_member_id ? 'soft' : 'muted'}>{ownerName(a.owner_member_id)}</td>
+                    <td className="r num">{fmt(a.current_value)}억</td>
+                    <td className="r pos num">{fmt(projectAssetValue(a, 10, macro))}억</td>
+                    <td className="r num">{fmt(a.current_value * a.annual_yield_pct / 100)}억</td>
+                    <td className="r zero num">{fmt(a.annual_tax)}억</td>
+                    <td className="r" style={{ whiteSpace: 'nowrap', paddingRight: 24 }}>
+                      <button onClick={() => openEdit(a)} className="link" style={{ marginRight: 8 }}>수정</button>
+                      <button onClick={() => del(a.id)} className="link" style={{ color: 'var(--red)' }}>삭제</button>
+                    </td>
+                  </tr>
+                ))}
+                <tr style={{ borderTop: '1px solid var(--line-strong)', background: 'var(--paper-sink)' }}>
+                  <td className="name" style={{ paddingLeft: 24, fontWeight: 700 }}>합계</td>
+                  <td></td>
+                  <td className="r num" style={{ fontWeight: 700 }}>{fmt(totalValue)}억</td>
+                  <td className="r pos num" style={{ fontWeight: 700 }}>{fmt(totalFutureValue)}억</td>
+                  <td className="r num" style={{ fontWeight: 700 }}>{fmt(totalYield)}억</td>
+                  <td className="r zero num" style={{ fontWeight: 700 }}>{fmt(totalTax)}억</td>
+                  <td></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
 
-                {/* 대출 정보 */}
-                {a.loan_amount > 0 && (
-                  <div className="mt-2 text-xs text-gray-500 flex gap-3">
-                    <span>대출 {fmt(a.loan_amount)}억</span>
-                    <span>금리 {a.loan_rate_pct}%</span>
-                    <span className="text-red-500">연이자 {fmt(a.loan_amount * a.loan_rate_pct / 100)}억</span>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+          {/* summary strip */}
+          <div className="summary">
+            <div className="s note">
+              <span className="dot" /><span>부동산 <b>{totalValue > 0 ? (assets.filter(a => ['주거용부동산','상업용부동산','토지','농지','임야','오피스텔'].includes(a.asset_type)).reduce((s,a) => s+a.current_value,0)/totalValue*100).toFixed(0) : 0}% 편중</b> · 현금화 어려움</span>
+            </div>
+            <div className={`s ${totalDebt === 0 ? 'ok' : 'warn'}`}>
+              <span className="dot" /><span>부채 <b>{fmt(totalDebt)}억</b> · LTV·DSCR 기준 충족</span>
+            </div>
+            <div className={`s ${assets.some(a => !a.owner_member_id) ? 'warn' : 'ok'}`}>
+              <span className="dot" /><span>미지정 자산 <b>{assets.filter(a => !a.owner_member_id).length}건</b></span>
+            </div>
+          </div>
+        </>
       )}
 
       {/* 모달 */}
       {open && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl">
-            <div className="p-5 border-b border-gray-100">
-              <h2 className="font-semibold text-gray-900">
-                {editing ? '자산 수정' : '자산 추가'}
-              </h2>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}>
+          <div style={{ background: '#fff', width: '100%', maxWidth: 520, border: '1px solid var(--line-strong)' }}>
+            <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--line)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 15, fontWeight: 600 }}>{editing ? '자산 수정' : '자산 추가'}</span>
+              <button onClick={() => setOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-faint)', fontSize: 18 }}>✕</button>
             </div>
-            <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
-              {/* 기본 정보 */}
+            <div style={{ padding: '16px 24px', maxHeight: '70vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div>
                 <label className="label">자산명 *</label>
                 <input className="input" placeholder="강남 아파트"
                   value={form.name} onChange={e => setForm({...form, name: e.target.value})}/>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div>
                   <label className="label">자산 유형</label>
                   <select className="select" value={form.asset_type}
@@ -239,9 +255,7 @@ export default function AssetsPage() {
                   </select>
                 </div>
               </div>
-
-              {/* 가액 */}
-              <div className="grid grid-cols-2 gap-3">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div>
                   <label className="label">현재 시가 (억원) *</label>
                   <input type="number" step="0.1" className="input" placeholder="10"
@@ -253,7 +267,7 @@ export default function AssetsPage() {
                     value={form.acquisition_cost || ''} onChange={e => setForm({...form, acquisition_cost: +e.target.value})}/>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div>
                   <label className="label">취득일</label>
                   <input type="date" className="input"
@@ -265,9 +279,7 @@ export default function AssetsPage() {
                     value={form.public_price_ratio || ''} onChange={e => setForm({...form, public_price_ratio: +e.target.value})}/>
                 </div>
               </div>
-
-              {/* 수익·세금 */}
-              <div className="grid grid-cols-2 gap-3">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div>
                   <label className="label">연 수익률 (%)</label>
                   <input type="number" step="0.1" className="input" placeholder="4.5"
@@ -279,9 +291,7 @@ export default function AssetsPage() {
                     value={form.annual_tax || ''} onChange={e => setForm({...form, annual_tax: +e.target.value})}/>
                 </div>
               </div>
-
-              {/* 대출 */}
-              <div className="grid grid-cols-3 gap-3">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
                 <div>
                   <label className="label">대출잔액 (억원)</label>
                   <input type="number" step="0.1" className="input" placeholder="0"
@@ -301,30 +311,25 @@ export default function AssetsPage() {
                   </select>
                 </div>
               </div>
-
-              {/* 성장률 */}
               <div>
                 <label className="label">기대 성장률 (% / 년)</label>
                 <input type="number" step="0.5" className="input" placeholder="2"
                   value={form.expected_growth_pct || ''} onChange={e => setForm({...form, expected_growth_pct: +e.target.value})}/>
               </div>
-
-              <div className="flex items-center gap-2">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <input type="checkbox" id="pt" checked={form.is_planned_transfer}
-                  onChange={e => setForm({...form, is_planned_transfer: e.target.checked})}
-                  className="w-4 h-4 rounded border-gray-300"/>
-                <label htmlFor="pt" className="text-sm text-gray-600">이전 계획 자산</label>
+                  onChange={e => setForm({...form, is_planned_transfer: e.target.checked})}/>
+                <label htmlFor="pt" style={{ fontSize: 13, color: 'var(--ink-soft)' }}>이전 계획 자산</label>
               </div>
-
               <div>
                 <label className="label">메모</label>
-                <textarea className="input resize-none h-16" placeholder="특이사항"
+                <textarea className="input" placeholder="특이사항"
                   value={form.notes} onChange={e => setForm({...form, notes: e.target.value})}/>
               </div>
             </div>
-            <div className="p-5 border-t border-gray-100 flex gap-2 justify-end">
-              <button onClick={() => setOpen(false)} className="btn-secondary">취소</button>
-              <button onClick={save} disabled={saving || !form.name} className="btn-primary">
+            <div style={{ padding: '16px 24px', borderTop: '1px solid var(--line)', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setOpen(false)} className="btn btn-ghost">취소</button>
+              <button onClick={save} disabled={saving || !form.name} className="btn btn-primary">
                 {saving ? '저장 중...' : '저장'}
               </button>
             </div>
