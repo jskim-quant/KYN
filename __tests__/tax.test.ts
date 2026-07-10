@@ -3,10 +3,7 @@
  *
  * 실행: npx vitest run
  *
-
  * 테스트용 합성 포트폴리오 (실제 데이터 아님)
-
-
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
