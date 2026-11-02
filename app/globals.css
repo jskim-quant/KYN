@@ -1987,3 +1987,11 @@
 .main .es .bd { display: flex; flex-direction: column; gap: 3px; }
 .main .es .bt { font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
 .main .es .bd2 { font-size: 11px; color: var(--ink-faint); }
+
+/* ── 종합 실행 로드맵: PDF 다운로드용 인쇄 스타일 ─────────────── */
+@media print {
+  body * { visibility: hidden; }
+  .kyn-print-report, .kyn-print-report * { visibility: visible; }
+  .kyn-print-report { position: absolute; top: 0; left: 0; width: 100%; border: none !important; padding: 0 !important; }
+  .no-print { display: none !important; }
+}

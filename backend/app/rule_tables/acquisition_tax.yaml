@@ -1,0 +1,42 @@
+# 취득세 법령 버전 테이블
+# 출처: 기존 KYN(Next.js) lib/tax.ts calcAcquisitionTax()에서 이전.
+
+- rule_id: acquisition-tax-general
+  jurisdiction: KR
+  tax_type: acquisition
+  rule_name: 취득세_유형별_세율
+  effective_from: "2024-01-01"
+  legal_basis:
+    - statute: 지방세법
+      article: "§11"
+  parameters:
+    residential_under_6: 0.012
+    residential_under_9: 0.022
+    residential_over_9: 0.032
+    residential_multi_house: 0.082
+    farmland: 0.034
+    commercial_or_land_default: 0.046
+    corp_residential: 0.12
+    corp_commercial_or_land: 0.046
+    surcharge_flat: 0.002   # 농특세+지방교육세 근사 (일부 구간엔 이미 포함)
+    unit: "억원 (기준값), 세율"
+  status: pending_review
+  reviewed_at: null
+  reviewed_by: null
+
+- rule_id: acquisition-tax-gift-inheritance
+  jurisdiction: KR
+  tax_type: acquisition
+  rule_name: 무상취득_취득세율
+  effective_from: "2024-01-01"
+  legal_basis:
+    - statute: 지방세법
+      article: "§11"
+  parameters:
+    inheritance_residential: 0.028
+    inheritance_other: 0.032
+    gift_residential_general: 0.038
+    gift_residential_corp_or_multi_house: 0.122
+  status: pending_review
+  reviewed_at: null
+  reviewed_by: null

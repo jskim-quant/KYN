@@ -1,0 +1,57 @@
+# 상속세 법령 버전 테이블
+# 출처: 기존 KYN(Next.js) lib/tax.ts calcInheritanceTax()에서 이미 검증·운영 중인 값을 이전.
+# 누진세율 구간은 gift_tax.yaml의 증여세_상속세_누진세율_구간과 동일(§26, §56 준용)하므로
+# 재정의하지 않고 규칙 엔진에서 공유 참조한다.
+
+- rule_id: inheritance-tax-personal-deductions
+  jurisdiction: KR
+  tax_type: inheritance
+  rule_name: 인적공제
+  effective_from: "2024-01-01"
+  legal_basis:
+    - statute: 상속세및증여세법
+      article: "§18~§21"
+  parameters:
+    basic_deduction: 2.0            # 기초공제
+    child_deduction_each: 0.5       # 자녀 1인당
+    minor_deduction_per_remaining_year: 0.1  # 미성년(19세 미만) 잔여연수 1년당
+    elderly_deduction_each: 0.5     # 65세 이상(본인 제외) 1인당
+    lump_sum_deduction: 5.0         # 일괄공제 (인적공제합계 vs 이 값 중 큰 것)
+    unit: "억원"
+  status: pending_review
+  reviewed_at: null
+  reviewed_by: null
+
+- rule_id: inheritance-tax-spousal-deduction
+  jurisdiction: KR
+  tax_type: inheritance
+  rule_name: 배우자공제
+  effective_from: "2024-01-01"
+  legal_basis:
+    - statute: 상속세및증여세법
+      article: "§19"
+  parameters:
+    min_deduction: 5.0
+    max_deduction: 30.0
+    actual_share_rate: 0.40   # 배우자 실제 상속분 추정 근사치 (총상속재산의 40%)
+    unit: "억원"
+  status: pending_review
+  reviewed_at: null
+  reviewed_by: null
+
+- rule_id: inheritance-tax-financial-asset-deduction
+  jurisdiction: KR
+  tax_type: inheritance
+  rule_name: 금융재산공제
+  effective_from: "2024-01-01"
+  legal_basis:
+    - statute: 상속세및증여세법
+      article: "§22"
+  parameters:
+    rate: 0.20
+    min_deduction: 0.2
+    max_deduction: 2.0
+    unit: "억원"
+  status: pending_review
+  reviewed_at: null
+  reviewed_by: null

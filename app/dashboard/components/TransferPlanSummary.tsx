@@ -55,7 +55,7 @@ export function TransferPlanSummaryCard({
         <div className="t">
           {title}
           <span className="sub">
-            자산별로 받을 가족 구성원을 복수 지정하고, 실행안은 전략 분석에서 최적화합니다.
+            자산별로 받을 가족 구성원을 복수 지정하고, 실행안은 시나리오 비교에서 최적화합니다.
           </span>
         </div>
         <Link

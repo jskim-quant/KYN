@@ -192,7 +192,7 @@ export default function SettingsPage() {
             <div>• 현물출자 지방세 감면: <b>개별 요건 확인</b></div>
           </div>
           <div className="mt-2 text-blue-600 border-t border-blue-200 pt-2">
-            ※ 자녀공제 5억원·최고세율 40% 정부 개정안은 시행 법령에 반영되지 않았습니다. 현재 계산에는 적용하지 않습니다.
+            ※ 자녀공제 5억원·최고세율 40% 개정안과 유산취득세 전환안은 국회 계류 중이며(2026-10-02 확인, 2차 자료) 시행 법령에 반영되지 않았습니다. 현재 계산에는 적용하지 않습니다.
           </div>
         </div>
       </section>

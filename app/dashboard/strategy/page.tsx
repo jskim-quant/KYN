@@ -10,12 +10,12 @@ import {
   PhasedGiftPlan, GiftPhase, PhaseRecipient,
   RecoveryPlanAnalysis, RecoveryStrategy, ExecutionStep,
   PublicFoundationScenario, CorpConversionScenarioResult,
-  CustomScenarioConfig, CustomScenarioResult, CustomAssetTransfer,
-  calcPublicFoundationScenario, calcCorpConversionScenario, calcCustomScenario,
+  calcPublicFoundationScenario, calcCorpConversionScenario,
   calcGiftTax, calcAdjustedTaxFromStrategies, AdjustedTaxResult,
   getAssetGrowthRate, calcAcquisitionTax,
 } from '@/lib/tax';
 import { KynLoader } from '@/app/dashboard/components/KynLoader';
+import { StrategyFlowNav } from '@/app/dashboard/components/StrategyFlowNav';
 import { TransferPlanSummaryCard } from '@/app/dashboard/components/TransferPlanSummary';
 import {
   clearSavedRecoveryScenario,
@@ -1205,7 +1205,7 @@ function PublicFoundationCard({
   );
 }
 
-// 법인전환 시나리오 카드
+// 법인전환 시나리오 상세 카드 (회수 전략에서 '법인전환' 선택 시 드릴다운)
 function CorpConversionCard({
   assets,
   members,
@@ -1298,353 +1298,6 @@ function CorpConversionCard({
 
           <div className="warn-note">
             <strong>현물출자 지방세 감면은 자동 적용하지 않습니다.</strong> 자산 유형, 사업 실체, 실행 시점에 따른 적용 요건을 세무사에게 확인하세요.
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// 시나리오 비교 테이블
-function AdvancedScenarioComparisonTable({
-  assets,
-  members,
-  totalEstate,
-  inheritanceTax,
-  strategies,
-  selectedStrategyIds,
-}: {
-  assets: Asset[];
-  members: FamilyMember[];
-  totalEstate: number;
-  inheritanceTax: number;
-  strategies: RecoveryStrategy[];
-  selectedStrategyIds: Set<string>;
-}) {
-  const strategyOptimalSaving = strategies
-    .filter(s => s.isApplicable && selectedStrategyIds.has(s.id))
-    .reduce((s, r) => s + r.netBenefit, 0);
-
-  const foundationAsset = assets.find(a =>
-    ['상업용부동산', '주거용부동산', '토지', '비상장주식'].includes(a.asset_type)
-  );
-  const foundationScenario = foundationAsset
-    ? calcPublicFoundationScenario(foundationAsset, 30, totalEstate, members)
-    : null;
-
-  const corpScenario = calcCorpConversionScenario(assets, 1.2, members);
-
-  type ScenarioRow = {
-    name: string;
-    inheritanceTax: number;
-    tenYearSaving: number;
-    annualCashImpact: number;
-    complexity: string;
-    suitability: string;
-  };
-
-  const rows: ScenarioRow[] = [
-    {
-      name: '현황 유지',
-      inheritanceTax,
-      tenYearSaving: 0,
-      annualCashImpact: 0,
-      complexity: '없음',
-      suitability: '기준선',
-    },
-    {
-      name: '회생방안 최적',
-      inheritanceTax: Math.max(0, inheritanceTax - strategyOptimalSaving),
-      tenYearSaving: strategyOptimalSaving,
-      annualCashImpact: strategyOptimalSaving / 10,
-      complexity: '중',
-      suitability: selectedStrategyIds.size > 0 ? '선택됨' : '미선택',
-    },
-    {
-      name: '공익법인 출연',
-      inheritanceTax: foundationScenario?.newTax ?? inheritanceTax,
-      tenYearSaving: foundationScenario?.taxSaving ?? 0,
-      annualCashImpact: -(foundationScenario?.controlLossValue ?? 0) / 10,
-      complexity: '높음',
-      suitability: (foundationScenario?.netBenefit ?? 0) > 0 ? '권장' : '비권장',
-    },
-    {
-      name: '법인전환',
-      inheritanceTax,
-      tenYearSaving: corpScenario.tenYearBenefit,
-      annualCashImpact: corpScenario.annualTaxSaving,
-      complexity: '중',
-      suitability: corpScenario.annualTaxSaving > 0 ? '권장' : '비권장',
-    },
-  ];
-
-  const minTax = Math.min(...rows.map(r => r.inheritanceTax));
-  const maxTenYrSaving = Math.max(...rows.map(r => r.tenYearSaving));
-
-  return (
-    <div className="scen-cmp">
-      <table>
-        <thead>
-          <tr>
-            {['시나리오', '예상 상속세', '10년 절세 누적', '연간 현금흐름 영향', '복잡도', '적합도'].map(h => (
-              <th key={h}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, i) => {
-            const isBestTax = row.inheritanceTax === minTax;
-            const isBestSaving = row.tenYearSaving === maxTenYrSaving && row.tenYearSaving > 0;
-            return (
-              <tr key={i}>
-                <td style={{ fontWeight: 600 }}>{row.name}</td>
-                <td className={isBestTax ? 'cmp-best' : 'cmp-neg'}>
-                  {fmt(row.inheritanceTax)}
-                  {isBestTax && <span className="cmp-best-tag">최저</span>}
-                </td>
-                <td className={isBestSaving ? 'cmp-best' : ''}>
-                  {row.tenYearSaving > 0 ? `+${fmt(row.tenYearSaving)}` : '—'}
-                  {isBestSaving && <span className="cmp-best-tag">최고</span>}
-                </td>
-                <td style={{ color: row.annualCashImpact > 0 ? 'var(--amber)' : row.annualCashImpact < 0 ? 'var(--red)' : 'var(--ink-faint)', fontWeight: 600 }}>
-                  {row.annualCashImpact > 0 ? `+${fmtM(row.annualCashImpact)}` : row.annualCashImpact < 0 ? fmtM(row.annualCashImpact) : '—'}
-                </td>
-                <td className="cmp-nm">{row.complexity}</td>
-                <td className={row.suitability === '권장' || row.suitability === '선택됨' ? 'cmp-rec' : row.suitability === '비권장' ? 'cmp-neg' : 'cmp-nm'}>
-                  {row.suitability}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// 커스텀 시나리오 빌더
-function CustomScenarioBuilder({
-  assets,
-  members,
-  totalEstate,
-  inheritanceTax,
-  strategies,
-}: {
-  assets: Asset[];
-  members: FamilyMember[];
-  totalEstate: number;
-  inheritanceTax: number;
-  strategies: RecoveryStrategy[];
-}) {
-  const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [transfers, setTransfers] = useState<CustomAssetTransfer[]>([]);
-  const [selectedStrategyIds, setSelectedStrategyIds] = useState<string[]>([]);
-  const [savedMsg, setSavedMsg] = useState(false);
-
-  const nonOwnerMembers = members.filter(m => m.relation !== '본인');
-
-  function getTransfer(assetId: string): CustomAssetTransfer | undefined {
-    return transfers.find(t => t.assetId === assetId);
-  }
-
-  function updateTransfer(assetId: string, patch: Partial<CustomAssetTransfer>) {
-    setTransfers(prev => {
-      const existing = prev.find(t => t.assetId === assetId);
-      if (existing) {
-        return prev.map(t => t.assetId === assetId ? { ...t, ...patch } : t);
-      }
-      return [...prev, { assetId, transferType: 'gift', transferPct: 50, ...patch }];
-    });
-  }
-
-  function removeTransfer(assetId: string) {
-    setTransfers(prev => prev.filter(t => t.assetId !== assetId));
-  }
-
-  const config: CustomScenarioConfig = {
-    assetTransfers: transfers,
-    selectedStrategyIds,
-    foundationDonationPct: 30,
-    corpConversionEnabled: transfers.some(t => t.transferType === 'corp'),
-    ceoSalary: 1.2,
-  };
-
-  const result: CustomScenarioResult = calcCustomScenario(
-    config, assets, members, totalEstate, inheritanceTax, strategies
-  );
-
-  function saveScenario() {
-    try {
-      localStorage.setItem('kyn_custom_scenario', JSON.stringify(config));
-      setSavedMsg(true);
-      setTimeout(() => setSavedMsg(false), 2000);
-    } catch { /* ignore */ }
-  }
-
-  return (
-    <div>
-      <div className="csb-tabs">
-        {([1, 2, 3] as const).map(s => (
-          <button
-            key={s}
-            onClick={() => setStep(s)}
-            className={`csb-tab${step === s ? ' on' : ''}`}
-          >
-            {s === 1 ? '1. 자산 이전 설계' : s === 2 ? '2. 전략 선택' : '3. 결과 요약'}
-          </button>
-        ))}
-      </div>
-
-      {step === 1 && (
-        <div>
-          <div className="csb-hint">각 자산을 포함할지 선택하고, 이전 방법과 비율을 설정하세요.</div>
-          {assets.map(asset => {
-            const t = getTransfer(asset.id);
-            const included = !!t;
-            const giftTaxForAsset = t && t.transferType === 'gift' && t.recipientMemberId
-              ? (() => {
-                  const recipient = members.find(m => m.id === t.recipientMemberId);
-                  return recipient ? calcGiftTax(asset.current_value * (t.transferPct / 100), recipient.relation) : 0;
-                })()
-              : 0;
-
-            return (
-              <div key={asset.id} className={`csb-asset${included ? ' on' : ''}`}>
-                <div className="ca-hd">
-                  <input
-                    type="checkbox"
-                    checked={included}
-                    onChange={e => {
-                      if (e.target.checked) {
-                        updateTransfer(asset.id, { assetId: asset.id, transferType: 'gift', transferPct: 50 });
-                      } else {
-                        removeTransfer(asset.id);
-                      }
-                    }}
-                    style={{ marginTop: 2, accentColor: 'var(--gold-deep)' }}
-                  />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <span className="ca-name">{asset.name}</span>
-                    <span className="ca-type">{asset.asset_type}</span>
-                    <span className="ca-val">{fmt(asset.current_value)}</span>
-                  </div>
-                </div>
-
-                {included && t && (
-                  <div className="ca-ctrls">
-                    <div className="ca-row">
-                      <label>이전 방법</label>
-                      <select
-                        value={t.transferType}
-                        onChange={e => updateTransfer(asset.id, { transferType: e.target.value as CustomAssetTransfer['transferType'] })}
-                        className="kyn"
-                        style={{ fontSize: 12 }}
-                      >
-                        <option value="gift">증여</option>
-                        <option value="foundation">공익법인 출연</option>
-                        <option value="corp">법인전환</option>
-                        <option value="sell">매각</option>
-                      </select>
-
-                      {t.transferType === 'gift' && (
-                        <>
-                          <label>수증자</label>
-                          <select
-                            value={t.recipientMemberId ?? ''}
-                            onChange={e => updateTransfer(asset.id, { recipientMemberId: e.target.value })}
-                            className="kyn"
-                            style={{ fontSize: 12 }}
-                          >
-                            <option value="">선택</option>
-                            {nonOwnerMembers.map(m => (
-                              <option key={m.id} value={m.id}>{m.name} ({m.relation})</option>
-                            ))}
-                          </select>
-                        </>
-                      )}
-                    </div>
-
-                    <div className="ca-row">
-                      <label style={{ whiteSpace: 'nowrap' }}>이전 비율: <strong>{t.transferPct}%</strong></label>
-                      <input
-                        type="range"
-                        min={1} max={100} step={1}
-                        value={t.transferPct}
-                        onChange={e => updateTransfer(asset.id, { transferPct: Number(e.target.value) })}
-                        style={{ flex: 1 }}
-                      />
-                      <span style={{ fontSize: 12, color: 'var(--ink-faint)', whiteSpace: 'nowrap' }}>{fmt(asset.current_value * t.transferPct / 100)}</span>
-                    </div>
-
-                    {t.transferType === 'gift' && t.recipientMemberId && (
-                      <div className="ca-tax">예상 증여세: {fmtM(giftTaxForAsset)}</div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-          <button onClick={() => setStep(2)} className="csb-btn">다음: 전략 선택 →</button>
-        </div>
-      )}
-
-      {step === 2 && (
-        <div>
-          <div className="csb-hint">적용할 회생방안 전략을 선택하세요.</div>
-          {strategies.filter(s => s.isApplicable).map(s => (
-            <label key={s.id} className="csb-strat-item">
-              <input
-                type="checkbox"
-                checked={selectedStrategyIds.includes(s.id)}
-                onChange={e => {
-                  if (e.target.checked) {
-                    setSelectedStrategyIds(prev => [...prev, s.id]);
-                  } else {
-                    setSelectedStrategyIds(prev => prev.filter(id => id !== s.id));
-                  }
-                }}
-                style={{ marginTop: 2, accentColor: 'var(--gold-deep)', flexShrink: 0 }}
-              />
-              <div style={{ flex: 1 }}>
-                <span className="si-title">{s.title}</span>
-                <span className="si-cat">{s.category}</span>
-                {s.netBenefit > 0 && <div className="si-net">순편익 +{fmtM(s.netBenefit)}</div>}
-              </div>
-            </label>
-          ))}
-          <div className="csb-btn-row">
-            <button onClick={() => setStep(1)} className="csb-btn sec">← 이전</button>
-            <button onClick={() => setStep(3)} className="csb-btn">다음: 결과 보기 →</button>
-          </div>
-        </div>
-      )}
-
-      {step === 3 && (
-        <div>
-          <div className="csb-res-grid">
-            {[
-              { label: '이전 자산 합계', val: fmt(result.totalTransferredValue), cls: '' },
-              { label: '납부 세금 합계', val: fmt(result.totalTaxBurden), cls: 'neg' },
-              { label: '기존 상속세', val: fmt(result.originalInheritanceTax), cls: 'neg' },
-              { label: '새 상속세', val: fmt(result.newInheritanceTax), cls: '' },
-              { label: '총 절세액', val: `+${fmt(result.totalTaxSaving)}`, cls: 'pos' },
-              { label: '세후 순자산', val: fmt(result.netWealthAfter), cls: '' },
-            ].map(c => (
-              <div key={c.label} className="rg-cell">
-                <div className="rl">{c.label}</div>
-                <div className={`rv${c.cls ? ` ${c.cls}` : ''}`}>{c.val}</div>
-              </div>
-            ))}
-          </div>
-          <div className="csb-btn-row">
-            <button onClick={() => setStep(2)} className="csb-btn sec">← 이전</button>
-            <button
-              onClick={saveScenario}
-              className="csb-btn"
-              style={savedMsg ? { background: 'var(--gold-deep)' } : {}}
-            >
-              {savedMsg ? '✓ 저장됨' : '이 시나리오 저장'}
-            </button>
           </div>
         </div>
       )}
@@ -2286,77 +1939,29 @@ function AdvancedScenariosSection({
   onFoundationAssetChange: (id: string) => void;
   onFoundationPctChange: (pct: number) => void;
 }) {
-  const [activeTab, setActiveTab] = useState<'foundation' | 'corp' | 'compare' | 'custom'>('foundation');
-
-  const tabs: { key: typeof activeTab; label: string }[] = [
-    { key: 'foundation', label: '공익법인' },
-    { key: 'corp', label: '법인전환' },
-    { key: 'compare', label: '시나리오 비교' },
-    { key: 'custom', label: '커스텀 설계' },
-  ];
-
+  // 법인전환/커스텀 설계/시나리오 비교는 시나리오 비교(STEP 2)의 S5·S7·최적 전략과
+  // 중복되어 제거함 — 공익법인 출연만 이 페이지 고유 기능으로 유지.
   return (
     <div className="adv-wrap">
       <div className="adv-div">
         <hr />
         <div className="adv-title">
-          <h2>고급 시나리오 분석</h2>
-          <p>공익법인 출연·법인전환·커스텀 시나리오 비교</p>
+          <h2>공익법인 출연 검토</h2>
+          <p>일부 자산을 공익법인에 출연해 상속재산에서 제외하는 방안</p>
         </div>
         <hr />
       </div>
 
-      <div className="adv-tabs">
-        {tabs.map(tab => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key)}
-            className="adv-tab"
-            aria-selected={activeTab === tab.key}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* 탭 콘텐츠 */}
-      {activeTab === 'foundation' && (
-        <PublicFoundationCard
-          assets={assets}
-          members={members}
-          totalEstate={totalEstate}
-          inheritanceTax={inheritanceTax}
-          selectedAssetId={foundationAssetId}
-          donationPct={foundationDonationPct}
-          onAssetChange={onFoundationAssetChange}
-          onPctChange={onFoundationPctChange}
-        />
-      )}
-      {activeTab === 'corp' && (
-        <CorpConversionCard
-          assets={assets}
-          members={members}
-        />
-      )}
-      {activeTab === 'compare' && (
-        <AdvancedScenarioComparisonTable
-          assets={assets}
-          members={members}
-          totalEstate={totalEstate}
-          inheritanceTax={inheritanceTax}
-          strategies={strategies}
-          selectedStrategyIds={selectedStrategyIds}
-        />
-      )}
-      {activeTab === 'custom' && (
-        <CustomScenarioBuilder
-          assets={assets}
-          members={members}
-          totalEstate={totalEstate}
-          inheritanceTax={inheritanceTax}
-          strategies={strategies}
-        />
-      )}
+      <PublicFoundationCard
+        assets={assets}
+        members={members}
+        totalEstate={totalEstate}
+        inheritanceTax={inheritanceTax}
+        selectedAssetId={foundationAssetId}
+        donationPct={foundationDonationPct}
+        onAssetChange={onFoundationAssetChange}
+        onPctChange={onFoundationPctChange}
+      />
     </div>
   );
 }
@@ -2551,17 +2156,15 @@ export default function StrategyPage() {
 
   return (
     <div className="main kyn-strategy">
-      <div className="crumb">Strategy Analysis</div>
+      <StrategyFlowNav active="/dashboard/strategy" />
+      <div className="crumb">STEP 3 · ADVANCED STRATEGY</div>
       <div className="pagehead">
         <div>
-          <h1>증여·상속 전략 분석</h1>
+          <h1>심화 전략 — 공익법인 · 회수 전략</h1>
           <p className="desc">
-            현재 구조를 진단하고 — 세금을 줄이고 — 납부 재원을 설계합니다
+            시나리오 비교로 고른 방향을 실제 자금 회수·실행 일정으로 구체화합니다
           </p>
         </div>
-        <Link href="/dashboard/scenarios" className="hero-cta">
-          시나리오 비교 →
-        </Link>
       </div>
       <div className="rule" />
 
@@ -2847,7 +2450,7 @@ export default function StrategyPage() {
       >
         <div className="panel" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, flexWrap: 'wrap' }}>
           <div style={{ fontSize: 13.5, color: 'var(--ink-soft)', lineHeight: 1.6 }}>
-            <strong>이전 계획</strong>에서는 자산별 수증자 후보만 지정합니다. 이전 방식·시점·최종 비율과 납부 재원은 전략 분석과 시나리오에서 최적화합니다.
+            <strong>이전 계획</strong>에서는 자산별 수증자 후보만 지정합니다. 이전 방식·시점·최종 비율과 납부 재원은 시나리오 비교와 심화 전략에서 최적화합니다.
           </div>
           <Link href="/dashboard/plan" className="btn btn-ghost" style={{ padding: '12px 20px', fontSize: 14 }}>
             이전 계획 열기 <span className="arrow">→</span>

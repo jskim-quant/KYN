@@ -12,8 +12,28 @@ const EMPTY = {
   current_value:0, acquisition_cost:0, acquisition_date:'',
   annual_yield_pct:0, annual_tax:0, loan_amount:0, loan_rate_pct:0,
   loan_type:'fixed' as 'fixed'|'variable', expected_growth_pct:2,
-  public_price_ratio:70, is_planned_transfer:false, notes:''
+  public_price_ratio:70, is_planned_transfer:false, notes:'',
+  liquidity_score: null as number | null,
 };
+
+// 1(즉시 현금화) ~ 5(매각 매우 어려움). 부동산은 입지에 따라 편차가 커서
+// (강남 등 핵심지 vs 지방) 자산유형만으로 고정값을 쓰지 않고 자산별로 설정한다.
+const LIQUIDITY_OPTIONS: Array<{ value: number; label: string; hint: string }> = [
+  { value: 1, label: '1 · 즉시 현금화', hint: '예금·상장주식 등' },
+  { value: 2, label: '2 · 수요 많음', hint: '핵심지 아파트·소형 상가 등' },
+  { value: 3, label: '3 · 보통', hint: '일반 아파트·오피스텔 등' },
+  { value: 4, label: '4 · 매각 어려움', hint: '지방 상업용·특수 물건 등' },
+  { value: 5, label: '5 · 매각 매우 어려움', hint: '농지·임야·비상장주식 등' },
+];
+
+function defaultLiquidityScore(assetType: AssetType): number {
+  if (['예금', '예금채권', '채권'].includes(assetType)) return 1;
+  if (['국내주식', '해외주식', '금융자산', '보험'].includes(assetType)) return 2;
+  if (['오피스텔', '주거용부동산'].includes(assetType)) return 3;
+  if (['상업용부동산', '비상장주식'].includes(assetType)) return 4;
+  if (['토지', '농지', '임야'].includes(assetType)) return 5;
+  return 3;
+}
 
 function fmt(n: number, d=1) {
   if (!n) return '0';
@@ -58,7 +78,8 @@ export default function AssetsPage() {
       annual_tax: a.annual_tax, loan_amount: a.loan_amount, loan_rate_pct: a.loan_rate_pct,
       loan_type: a.loan_type, expected_growth_pct: a.expected_growth_pct,
       public_price_ratio: a.public_price_ratio, is_planned_transfer: a.is_planned_transfer,
-      notes: a.notes || ''
+      notes: a.notes || '',
+      liquidity_score: a.liquidity_score ?? null,
     });
     setEditing(a.id); setOpen(true);
   }
@@ -315,6 +336,24 @@ export default function AssetsPage() {
                 <label className="label">기대 성장률 (% / 년)</label>
                 <input type="number" step="0.5" className="input" placeholder="2"
                   value={form.expected_growth_pct || ''} onChange={e => setForm({...form, expected_growth_pct: +e.target.value})}/>
+              </div>
+              <div>
+                <label className="label">
+                  유동성 (매각 용이성)
+                  <span style={{ fontWeight: 400, color: 'var(--ink-faint)' }}>
+                    {' '}— 같은 부동산이라도 강남 등 핵심지와 지방은 다르므로 자산별로 설정
+                  </span>
+                </label>
+                <select className="select" value={form.liquidity_score ?? ''}
+                  onChange={e => setForm({...form, liquidity_score: e.target.value ? +e.target.value : null})}>
+                  <option value="">
+                    자동 (유형 기본값: {defaultLiquidityScore(form.asset_type)}
+                    {' · '}{LIQUIDITY_OPTIONS.find(o => o.value === defaultLiquidityScore(form.asset_type))?.label.split(' · ')[1]})
+                  </option>
+                  {LIQUIDITY_OPTIONS.map(o => (
+                    <option key={o.value} value={o.value}>{o.label} — {o.hint}</option>
+                  ))}
+                </select>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <input type="checkbox" id="pt" checked={form.is_planned_transfer}

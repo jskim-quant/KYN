@@ -1,0 +1,93 @@
+# 양도소득세 법령 버전 테이블
+# 출처: 기존 KYN(Next.js) lib/tax.ts calcCapitalGainsTax() / calcIncomeTax()에서 이전.
+
+- rule_id: cgt-income-tax-brackets
+  jurisdiction: KR
+  tax_type: cgt
+  rule_name: 종합소득세_누진세율_구간
+  effective_from: "2024-01-01"
+  legal_basis:
+    - statute: 소득세법
+      article: "§55"
+  parameters:
+    bracket_1_upto: 0.14
+    bracket_1_rate: 0.06
+    bracket_1_base: 0.0
+    bracket_2_upto: 0.50
+    bracket_2_rate: 0.15
+    bracket_2_base: 0.0084
+    bracket_3_upto: 0.88
+    bracket_3_rate: 0.24
+    bracket_3_base: 0.0624
+    bracket_4_upto: 1.50
+    bracket_4_rate: 0.35
+    bracket_4_base: 0.1536
+    bracket_5_upto: 3.00
+    bracket_5_rate: 0.38
+    bracket_5_base: 0.3706
+    bracket_6_upto: 5.00
+    bracket_6_rate: 0.40
+    bracket_6_base: 0.9406
+    bracket_7_upto: 10.0
+    bracket_7_rate: 0.42
+    bracket_7_base: 1.7406
+    bracket_8_rate: 0.45
+    bracket_8_base: 3.8406
+    unit: "억원"
+  status: pending_review
+  reviewed_at: null
+  reviewed_by: null
+
+- rule_id: cgt-long-term-holding-deduction
+  jurisdiction: KR
+  tax_type: cgt
+  rule_name: 장기보유특별공제_일반
+  effective_from: "2024-01-01"
+  legal_basis:
+    - statute: 소득세법
+      article: "§95②"
+  parameters:
+    years_3_rate: 0.06
+    years_5_rate: 0.10
+    years_10_rate: 0.20
+    years_15_rate: 0.30
+    applicable_asset_types: ["상업용부동산", "주거용부동산", "토지"]
+  status: pending_review
+  reviewed_at: null
+  reviewed_by: null
+
+- rule_id: cgt-one-house-exemption
+  jurisdiction: KR
+  tax_type: cgt
+  rule_name: 1세대1주택_비과세
+  effective_from: "2024-01-01"
+  legal_basis:
+    - statute: 소득세법
+      article: "§89"
+  parameters:
+    exempt_limit: 12.0                 # 양도가액 12억 이하 전액 비과세
+    min_holding_years: 2
+    lthd_10yr_rate: 0.80                # 보유+거주 4%+4%, 10년 이상 최대
+    lthd_5yr_rate: 0.40
+    lthd_below_5yr_rate: 0.24
+    basic_deduction: 0.025
+    unit: "억원"
+  status: pending_review
+  reviewed_at: null
+  reviewed_by: null
+
+- rule_id: cgt-short-term-flat-rate
+  jurisdiction: KR
+  tax_type: cgt
+  rule_name: 단기보유_중과세율
+  effective_from: "2024-01-01"
+  legal_basis:
+    - statute: 소득세법
+      article: "§104"
+  parameters:
+    under_1yr_rate: 0.50
+    under_2yr_rate: 0.40
+    basic_deduction: 0.025
+  status: pending_review
+  reviewed_at: null
+  reviewed_by: null

@@ -1,4 +1,5 @@
 import { Asset, FamilyMember, MacroSettings, TransferType } from '@/types';
+import { carryOverPeriodYears, CARRYOVER_YEARS_REAL_ESTATE_CURRENT } from './tax/policy';
 
 // ── 상수 ──────────────────────────────────────────────────────
 export const GIFT_DEDUCTIONS: Record<string, number> = {
@@ -1507,21 +1508,26 @@ function buildRationale(
 }
 
 // ── 이월과세 계산 (소득세법 §97의2) ─────────────────────────────
-// 배우자/직계존비속으로부터 증여받은 자산을 5년 이내 양도 시 원취득가 적용
+// 배우자/직계존비속으로부터 증여받은 자산을 기간 내 양도 시 원취득가 적용 (소득세법 §97의2)
+// 기간: 부동산은 증여일 2023-01-01 이후 10년, 이전 5년 (policy.ts carryOverPeriodYears)
 export function calcCarryOverCGT(
   asset: Asset,
   giftValue: number,           // 증여받은 시점 시가 (억)
   saleYearsAfterGift: number,  // 증여 후 매각까지 보유기간 (년)
   projectedSaleValue: number,  // 예상 매각가 (억)
+  giftDate?: string | Date,    // 증여일 (기본: 오늘). 2023-01-01 이후면 부동산 10년, 이전이면 5년
 ): {
   isCarryOver: boolean;
+  carryOverPeriodYears: number; // 적용된 이월과세 기간(년)
   costBasis_carryOver: number;  // 이월과세 적용 시 취득가 (원취득가)
-  costBasis_normal: number;     // 5년+ 보유 시 취득가 (증여시가)
-  cgt_carryOver: number;        // 즉시 매각 시 양도세 (이월과세)
-  cgt_normal: number;           // 5년+ 보유 후 매각 시 양도세
+  costBasis_normal: number;     // 이월과세 기간 경과 후 취득가 (증여시가)
+  cgt_carryOver: number;        // 이월과세 적용 시 양도세 (원취득가 기준)
+  cgt_normal: number;           // 이월과세 기간 경과 후 양도세 (증여시가 기준)
+  cgt_applicable: number;       // saleYearsAfterGift 시점에 실제 적용되는 양도세
   extraTaxCarryOver: number;    // 이월과세로 추가 발생하는 세금 (증여효과 감소분)
 } {
-  const isCarryOver = saleYearsAfterGift < 5;
+  const periodYears = carryOverPeriodYears(asset.asset_type, giftDate);
+  const isCarryOver = saleYearsAfterGift < periodYears;
 
   // 원취득가 (이월과세 적용 시)
   const costBasis_carryOver = asset.acquisition_cost;
@@ -1568,10 +1574,12 @@ export function calcCarryOverCGT(
 
   return {
     isCarryOver,
+    carryOverPeriodYears: periodYears,
     costBasis_carryOver,
     costBasis_normal,
     cgt_carryOver,
     cgt_normal,
+    cgt_applicable: isCarryOver ? cgt_carryOver : cgt_normal,
     extraTaxCarryOver,
   };
 }
@@ -1591,7 +1599,8 @@ export interface StrategyAction {
   giftTax: number;              // 예상 증여세
   deductionUsed: number;        // 이번에 사용된 공제액
   cgtIfImmediateSale: number;   // 증여 후 즉시 매각 시 양도세 (이월과세 적용)
-  cgtIf5yrHoldSale: number;    // 5년 이상 보유 후 매각 시 양도세
+  cgtIf5yrHoldSale: number;    // 이월과세 기간 경과 후 매각 시 양도세 (필드명은 호환 유지; 현행 부동산 10년)
+  carryOverPeriodYears?: number; // 적용된 이월과세 기간(년)
   extraTaxIfImmediate: number;  // 즉시 매각 시 이월과세로 추가 세금
   carryOverWarning: boolean;    // 이월과세 주의 여부 (추가세금 > 500만원)
   gainPct: number;              // 시세차익률 (current/acquisition - 1) × 100
@@ -1672,9 +1681,10 @@ export function generateDistributionStrategies(
 
     // 즉시 매각 시 (이월과세 적용, saleYearsAfterGift=0)
     const immediate = calcCarryOverCGT(asset, giftValue, 0, giftValue);
-    // 5년 보유 후 매각 — 예상 매각가에 성장률 반영
-    const projectedSale5yr = giftValue * Math.pow(1 + getGrowthRate(asset), 5);
-    const hold5yr = calcCarryOverCGT(asset, giftValue, 5, projectedSale5yr);
+    // 이월과세 기간 경과 후 매각 (부동산 10년·2022년 이전 증여 5년) — 예상 매각가에 성장률 반영
+    const carryPeriod = carryOverPeriodYears(asset.asset_type);
+    const projectedSaleHold = giftValue * Math.pow(1 + getGrowthRate(asset), carryPeriod);
+    const holdAfterPeriod = calcCarryOverCGT(asset, giftValue, carryPeriod, projectedSaleHold);
 
     const gainPct = asset.acquisition_cost > 0
       ? ((asset.current_value - asset.acquisition_cost) / asset.acquisition_cost) * 100
@@ -1694,7 +1704,8 @@ export function generateDistributionStrategies(
       giftTax,
       deductionUsed,
       cgtIfImmediateSale: immediate.cgt_carryOver,
-      cgtIf5yrHoldSale: hold5yr.cgt_normal,
+      cgtIf5yrHoldSale: holdAfterPeriod.cgt_normal,
+      carryOverPeriodYears: carryPeriod,
       extraTaxIfImmediate: immediate.extraTaxCarryOver,
       carryOverWarning: immediate.extraTaxCarryOver > 0.05, // > 500만원
       gainPct,
@@ -1763,17 +1774,17 @@ export function generateDistributionStrategies(
       netToFamilyInherit: totalValue - inheritanceTaxNow,
       pros: [
         '공제 한도 내 증여분은 즉시 비과세 이전 가능',
-        '증여 시점에 취득가 확정 → 5년 보유 후 양도세 절감',
+        `증여 시점에 취득가 확정 → 이월과세 기간(부동산 ${CARRYOVER_YEARS_REAL_ESTATE_CURRENT}년) 경과 후 양도세 절감`,
         '자산을 빠르게 가족에게 이전하여 향후 상속세 기반 축소',
       ],
       cons: [
         '공제 초과분은 즉시 증여세 납부 부담',
-        '5년 내 매각 시 이월과세(소득세법§97의2) 적용 — 양도세 폭탄 주의',
+        `${CARRYOVER_YEARS_REAL_ESTATE_CURRENT}년 내 매각 시 이월과세(소득세법§97의2) 적용 — 양도세 폭탄 주의`,
         '일시에 여러 자산 이전 시 유동성 부담 발생 가능',
       ],
       keyRules: [
         '상증법§53: 수증자별 10년 합산 공제 한도 적용',
-        '소득세법§97의2: 5년 이내 매각 시 원취득가 기준 양도세',
+        `소득세법§97의2: 증여 후 ${CARRYOVER_YEARS_REAL_ESTATE_CURRENT}년 이내(2022-12-31 이전 증여는 5년) 매각 시 원취득가 기준 양도세`,
         '상증법§57: 손자녀 세대생략 시 산출세액 30% 할증',
       ],
       isRecommended: true,
@@ -1878,7 +1889,7 @@ export function generateDistributionStrategies(
       ],
       keyRules: [
         '상증법§53: 10년 합산 공제 리셋 (동일인→수증자)',
-        '소득세법§97의2: 5년 이내 매각 시 원취득가 양도세',
+        `소득세법§97의2: 증여 후 ${CARRYOVER_YEARS_REAL_ESTATE_CURRENT}년 이내(2022-12-31 이전 증여는 5년) 매각 시 원취득가 양도세`,
         '자산 성장률 반영: 10년 후 이전가치는 현재보다 높음',
       ],
       isRecommended: false,
@@ -1927,35 +1938,36 @@ export function generateDistributionStrategies(
     const cgtImmediate = actions.reduce((s, a) => s + a.cgtIfImmediateSale, 0);
     const cgt5yr = actions.reduce((s, a) => s + a.cgtIf5yrHoldSale, 0);
 
-    // 5년 후 예상 가치
-    const projectedValue5yr = selectedAssets.reduce(
-      (s, a) => s + a.current_value * Math.pow(1 + getGrowthRate(a), 5), 0);
+    // 이월과세 기간 경과 시점의 예상 가치
+    const holdYears = Math.max(1, ...actions.map(a => a.carryOverPeriodYears ?? 5));
+    const projectedValueHold = selectedAssets.reduce(
+      (s, a) => s + a.current_value * Math.pow(1 + getGrowthRate(a), holdYears), 0);
 
     return {
       id: 'strategy3',
-      label: '증여 후 5년 보유 매각',
-      tagline: '지금 증여 후 5년 보유 → 이월과세 탈출 후 매각 (5년 후 예상 가치 반영)',
+      label: `증여 후 ${holdYears}년 보유 매각`,
+      tagline: `지금 증여 후 ${holdYears}년 보유 → 이월과세 기간 경과 후 매각 (${holdYears}년 후 예상 가치 반영)`,
       actions,
       totalGiftTax,
       cgtSellImmediately: totalGiftTax + cgtImmediate,
       cgtSellAfter5yr: totalGiftTax + cgt5yr,
       inheritanceAlt: inheritanceTax10yr,
-      netToFamilyGiftHold: projectedValue5yr - totalGiftTax - cgt5yr,
+      netToFamilyGiftHold: projectedValueHold - totalGiftTax - cgt5yr,
       netToFamilyInherit: totalValue - inheritanceTaxNow,
       pros: [
-        '5년 이상 보유 시 증여시가가 취득가로 확정 → 양도세 대폭 절감',
+        `${holdYears}년 이상 보유 시 증여시가가 취득가로 확정 → 양도세 대폭 절감`,
         `즉시 매각 대비 양도세 절감 예상: ${(cgtImmediate - cgt5yr).toFixed(2)}억원`,
-        `5년 후 예상 자산가치: ${projectedValue5yr.toFixed(1)}억 (성장 반영)`,
-        '5년 보유 기간 동안 자산 성장분도 수증자가 누림',
+        `${holdYears}년 후 예상 자산가치: ${projectedValueHold.toFixed(1)}억 (성장 반영)`,
+        `${holdYears}년 보유 기간 동안 자산 성장분도 수증자가 누림`,
       ],
       cons: [
-        '5년간 자산 매각 불가 → 유동성 제약',
-        '5년 내 매각 강행 시 이월과세로 원취득가 기준 양도세 부과',
+        `${holdYears}년간 자산 매각 불가 → 유동성 제약`,
+        `${holdYears}년 내 매각 강행 시 이월과세로 원취득가 기준 양도세 부과`,
         '증여세는 즉시 납부 필요 (5년 유예 없음)',
       ],
       keyRules: [
-        '소득세법§97의2: 증여 후 5년 이내 양도 시 수증자의 양도차익 = 매각가 - 증여자 원취득가',
-        '5년 경과 후 양도 시 취득가 = 증여받은 시점 시가 (정상 적용)',
+        `소득세법§97의2: 증여 후 ${holdYears}년 이내(2022-12-31 이전 증여는 5년) 양도 시 수증자의 양도차익 = 매각가 - 증여자 원취득가`,
+        `${holdYears}년 경과 후 양도 시 취득가 = 증여받은 시점 시가 (정상 적용)`,
         '보유기간에 따른 장기보유특별공제: 3년+6%, 5년+10%, 10년+20%, 15년+30%',
       ],
       isRecommended: false,

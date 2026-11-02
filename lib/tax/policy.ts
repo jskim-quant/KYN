@@ -164,3 +164,23 @@ export const LIVE_IN_HOME_DEDUCTION_MAX = 6.0;
 export const PRIOR_GIFT_HEIR_YEARS    = 10;
 /** 상속인 외에 한 사전 증여 합산 기간 (년) */
 export const PRIOR_GIFT_NON_HEIR_YEARS = 5;
+
+// ── 이월과세 적용기간 (소득세법 §97의2) ──────────────────────────
+// 배우자·직계존비속에게 증여받은 부동산을 기간 내 양도하면 증여자의 취득가액을 적용한다.
+// 기간: 증여일 2023-01-01 이후 10년, 2022-12-31 이전 5년.
+// 근거: 실무 소스 4건 일치(Taxly·watax·wikidocs·해온세무) + 개정 연혁(신김 Legal Update, 5년 시기).
+// 공식 원문(law.go.kr) 대조 필요 — docs: KYN 세무 전략 리서치 Report 1 #6, 마지막 확인 2026-10-02.
+// 주식(소득세법 §94①3호) 1년(2025 개정)은 과세대상 주식 판정이 필요해 아직 반영하지 않는다.
+export const CARRYOVER_RULE_CHANGE_DATE = '2023-01-01';
+export const CARRYOVER_YEARS_REAL_ESTATE_CURRENT = 10;
+export const CARRYOVER_YEARS_REAL_ESTATE_LEGACY = 5;
+export const REAL_ESTATE_ASSET_TYPES: string[] = ['주거용부동산', '상업용부동산', '토지', '농지', '임야', '오피스텔'];
+
+/** 증여일 기준 이월과세 적용기간(년). 부동산이 아닌 자산은 기존 동작(5년)을 유지한다. */
+export function carryOverPeriodYears(assetType: string, giftDate: string | Date = new Date()): number {
+  if (!REAL_ESTATE_ASSET_TYPES.includes(assetType)) return CARRYOVER_YEARS_REAL_ESTATE_LEGACY;
+  const iso = typeof giftDate === 'string' ? giftDate.slice(0, 10) : giftDate.toISOString().slice(0, 10);
+  return iso >= CARRYOVER_RULE_CHANGE_DATE
+    ? CARRYOVER_YEARS_REAL_ESTATE_CURRENT
+    : CARRYOVER_YEARS_REAL_ESTATE_LEGACY;
+}

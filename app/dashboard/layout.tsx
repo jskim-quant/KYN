@@ -9,9 +9,8 @@ const NAV = [
   { href: '/dashboard/members',   label: '가족 구성' },
   { href: '/dashboard/assets',    label: '자산 목록' },
   { href: '/dashboard/tax',       label: '세금 분석' },
-  { href: '/dashboard/plan',      label: '이전 계획' },
-  { href: '/dashboard/strategy',  label: '전략 분석' },
-  { href: '/dashboard/scenarios', label: '시나리오' },
+  { href: '/dashboard/plan',      label: '전략 수립', group: ['/dashboard/plan', '/dashboard/scenarios', '/dashboard/strategy'] },
+  { href: '/dashboard/engine-v2', label: '정량 엔진(베타)' },
   { href: '/dashboard/settings',  label: '설정' },
 ];
 
@@ -59,7 +58,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </Link>
           <nav className="kyn-topnav" aria-label="대시보드 메뉴">
             {NAV.map(item => {
-              const active = pathname === item.href;
+              const active = item.group
+                ? item.group.some(p => pathname === p || pathname.startsWith(p + '/'))
+                : pathname === item.href;
               return (
                 <Link
                   key={item.href}

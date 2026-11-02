@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase';
 import { Asset, FamilyMember, TransferPlan, TransferType } from '@/types';
 import { KynLoader } from '@/app/dashboard/components/KynLoader';
+import { StrategyFlowNav } from '@/app/dashboard/components/StrategyFlowNav';
 import {
   RECIPIENT_ASSIGNMENT_NOTE,
   isRecipientAssignmentPlan,
@@ -124,12 +125,13 @@ export default function PlanPage() {
 
   return (
     <div className="main">
+      <StrategyFlowNav active="/dashboard/plan" />
       <div className="page-header">
         <div>
-          <div className="crumb">TRANSFER PLANNING</div>
-          <h1 className="page-title" style={{ marginTop: 10 }}>이전 계획</h1>
+          <div className="crumb">STEP 1 · TRANSFER PLANNING</div>
+          <h1 className="page-title" style={{ marginTop: 10 }}>계획 설정</h1>
           <p style={{ margin: '6px 0 0', fontSize: 13.5, color: 'var(--ink-faint)', lineHeight: 1.6 }}>
-            자산마다 받을 가족 구성원을 복수로 지정합니다. 구체적인 실행안은 전략 분석에서 최적화합니다.
+            자산마다 받을 가족 구성원을 복수로 지정합니다. 구체적인 실행안은 다음 단계인 시나리오 비교에서 최적화합니다.
           </p>
         </div>
       </div>
@@ -139,8 +141,8 @@ export default function PlanPage() {
           <b>1. 자산별 수증자 후보 지정</b>
           <span>자산을 받을 실제 가족 구성원을 선택합니다. 복수 선택이 가능하며 이 화면에서는 자산과 수증자 후보만 연결합니다.</span>
         </div>
-        <Link href="/dashboard/strategy" className="link" style={{ whiteSpace: 'nowrap' }}>
-          배정 완료 후 전략 분석으로 이동 →
+        <Link href="/dashboard/scenarios" className="link" style={{ whiteSpace: 'nowrap' }}>
+          배정 완료 후 시나리오 비교로 이동 →
         </Link>
       </div>
 
@@ -163,7 +165,7 @@ export default function PlanPage() {
       <div className="stepbar" style={{ marginTop: 20 }}>
         <span style={{ fontSize: 12.5, color: 'var(--ink-faint)', lineHeight: 1.7 }}>
           <b style={{ color: 'var(--ink-soft)' }}>계산 기준</b>{'  '}
-          이 화면은 가족 구성원 후보만 지정합니다. 후보 배정만으로 증여세·취득세·상속세가 발생한 것으로 계산하지 않으며, 실제 실행안은 전략 분석에서 별도로 저장합니다.
+          이 화면은 가족 구성원 후보만 지정합니다. 후보 배정만으로 증여세·취득세·상속세가 발생한 것으로 계산하지 않으며, 실제 실행안은 시나리오 비교에서 별도로 저장합니다.
         </span>
       </div>
     </div>
@@ -189,7 +191,7 @@ function SummaryView({
         <div>
           <div className="crumb" style={{ marginBottom: 8 }}>RECIPIENT ASSIGNMENT</div>
           <div className="t">자산별 수증자 후보
-            <span className="sub">이 배정은 최종 증여 지시가 아닙니다. 전략 분석이 세금, 취득비용과 현금흐름을 비교해 실행안을 계산합니다.</span>
+            <span className="sub">이 배정은 최종 증여 지시가 아닙니다. 시나리오 비교가 세금, 취득비용과 현금흐름을 비교해 실행안을 계산합니다.</span>
           </div>
         </div>
         <button type="button" onClick={onEdit}
@@ -356,7 +358,7 @@ function AssetAssignmentDesigner({
       </div>
 
       <div style={{ border: '1px solid var(--line)', borderTop: 0, background: 'var(--paper)', padding: '16px 22px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 20 }}>
-        <div style={{ color: 'var(--ink-faint)', fontSize: 12.5 }}>후보 미지정 자산은 전략 분석에서 이전 대상으로 사용하지 않습니다.</div>
+        <div style={{ color: 'var(--ink-faint)', fontSize: 12.5 }}>후보 미지정 자산은 시나리오 비교에서 이전 대상으로 사용하지 않습니다.</div>
         <button type="button" onClick={() => void save()} disabled={saving}
           style={{ border: '1px solid var(--ink)', background: 'var(--ink)', color: '#F4F2EC', padding: '12px 24px', cursor: saving ? 'wait' : 'pointer', opacity: saving ? 0.65 : 1, fontWeight: 600, fontSize: 13.5, fontFamily: 'var(--sans)' }}>
           {saving ? '저장 중...' : '수증자 후보 저장'}

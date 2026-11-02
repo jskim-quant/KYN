@@ -3,3 +3,12 @@ node_modules/
 .env.local
 .env
 .DS_Store
+
+# Python backend
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.pytest_cache/
+*.pyc
+*.tsbuildinfo
+Claude outputs/

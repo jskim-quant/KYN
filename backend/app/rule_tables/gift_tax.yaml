@@ -1,0 +1,126 @@
+# 증여세 법령 버전 테이블
+#
+# 출처: 기존 KYN(Next.js) lib/tax/policy.ts에서 이미 검증·운영 중인 값을 이전.
+# effective_from은 현행 5구간 누진세율 구조가 도입된 시점을 참고값으로 기재했으나
+# 정확한 시행일은 세무사 확인이 필요하다 (status: pending_review로 표시한 항목 참고).
+#
+# 값 변경 시 이 파일만 수정하면 전체 반영된다 — 코드에 세율을 하드코딩하지 않는다.
+
+- rule_id: gift-tax-brackets-krw
+  jurisdiction: KR
+  tax_type: gift
+  rule_name: 증여세_상속세_누진세율_구간
+  effective_from: "2000-01-01"
+  legal_basis:
+    - statute: 상속세및증여세법
+      article: "§26"
+      note: "상속세 세율 (증여세는 §56에서 준용)"
+  parameters:
+    bracket_1_upto: 1.0
+    bracket_1_rate: 0.10
+    bracket_1_base: 0.0
+    bracket_2_upto: 5.0
+    bracket_2_rate: 0.20
+    bracket_2_base: 0.10
+    bracket_3_upto: 10.0
+    bracket_3_rate: 0.30
+    bracket_3_base: 0.90
+    bracket_4_upto: 30.0
+    bracket_4_rate: 0.40
+    bracket_4_base: 2.40
+    bracket_5_rate: 0.50
+    bracket_5_base: 10.40
+    unit: "억원"
+  status: pending_review
+  reviewed_at: null
+  reviewed_by: null
+
+- rule_id: gift-tax-deductions-by-relation
+  jurisdiction: KR
+  tax_type: gift
+  rule_name: 관계별_10년_증여공제_한도
+  effective_from: "2024-01-01"
+  legal_basis:
+    - statute: 상속세및증여세법
+      article: "§53"
+  parameters:
+    spouse: 6.0
+    child_adult: 0.5
+    child_minor: 0.2
+    grandchild_adult: 0.5
+    grandchild_minor: 0.2
+    daughter_in_law: 0.1
+    son_in_law: 0.1
+    parent: 0.5
+    grandparent: 0.5
+    sibling: 0.1
+    uncle_aunt: 0.1
+    other: 0.1
+    unit: "억원"
+  status: pending_review
+  reviewed_at: null
+  reviewed_by: null
+
+- rule_id: gift-tax-marriage-birth-bonus
+  jurisdiction: KR
+  tax_type: gift
+  rule_name: 혼인_출산_추가공제
+  effective_from: "2024-01-01"
+  legal_basis:
+    - statute: 상속세및증여세법
+      article: "§53의2"
+  parameters:
+    amount: 1.0
+    unit: "억원"
+  status: pending_review
+  reviewed_at: null
+  reviewed_by: null
+
+- rule_id: gift-tax-generation-skip-surcharge
+  jurisdiction: KR
+  tax_type: gift
+  rule_name: 세대생략_증여_할증
+  effective_from: "2000-01-01"
+  legal_basis:
+    - statute: 상속세및증여세법
+      article: "§57"
+  parameters:
+    general_surcharge_multiplier: 1.30
+    minor_over_threshold_surcharge_multiplier: 1.40
+    minor_threshold_amount: 20.0
+    unit: "억원"
+  status: pending_review
+  reviewed_at: null
+  reviewed_by: null
+
+- rule_id: gift-tax-voluntary-filing-credit
+  jurisdiction: KR
+  tax_type: gift
+  rule_name: 신고세액공제
+  effective_from: "2019-01-01"
+  legal_basis:
+    - statute: 상속세및증여세법
+      article: "§69"
+  parameters:
+    credit_rate: 0.03
+  status: pending_review
+  reviewed_at: null
+  reviewed_by: null
+
+- rule_id: gift-tax-fair-loan-rate
+  jurisdiction: KR
+  tax_type: gift
+  rule_name: 가족간_금전대여_적정이자율
+  effective_from: "2016-03-21"
+  legal_basis:
+    - statute: 상속세및증여세법
+      article: "§41의4"
+    - statute: 상속세및증여세법 시행령
+      article: "§31의4"
+  parameters:
+    fair_interest_rate: 0.046
+    annual_gift_threshold: 0.10
+    unit: "억원 (threshold), 연율 (rate)"
+  status: pending_review
+  reviewed_at: null
+  reviewed_by: null
